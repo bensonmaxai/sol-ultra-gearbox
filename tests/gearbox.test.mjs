@@ -326,6 +326,26 @@ test("dispatch runtime install rolls back every target after a mid-write failure
   assert.deepEqual(await treeState(home), before);
 });
 
+test("active dispatch install requires a signed activation policy and remains rollback-safe", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "gearbox-dispatch-active-"));
+  const backups = await mkdtemp(join(tmpdir(), "gearbox-dispatch-active-backups-"));
+  t.after(() => Promise.all([rm(home, { recursive: true, force: true }), rm(backups, { recursive: true, force: true })]));
+  const activation = { installId: "install-test", manifestPath: "/private/tmp/active-manifest.json" };
+  const policy = createDispatchPolicy({ mode: "active", allowTypedBridge: false, activation });
+  const manifest = await installDispatchRuntime({
+    sourceRoot: REPO_ROOT,
+    codexHome: home,
+    backupDirectory: backups,
+    dispatchMode: "active",
+    dispatchPolicy: policy,
+  });
+  assert.equal(manifest.policyMode, "active");
+  const installed = JSON.parse(await readFile(join(home, "gearbox", "dispatch-policy.json"), "utf8"));
+  assert.deepEqual(installed.activation, activation);
+  assert.equal(installed.allowTypedBridge, false);
+  await rollbackDispatchRuntime({ manifest, force: true });
+});
+
 test("redactSensitive removes sensitive payloads but retains usage counts", () => {
   const output = redactSensitive({
     token: "SECRET_TOKEN",
