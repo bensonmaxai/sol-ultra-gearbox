@@ -1077,8 +1077,9 @@ async function installAfterSmoke(smoke, { dispatchMode = null } = {}) {
     mode: 0o755,
     backup: launcherBackup,
   });
+  let dispatchInstall = null;
   if (policySource !== null) {
-    const dispatchInstall = await installDispatchRuntime({
+    dispatchInstall = await installDispatchRuntime({
       sourceRoot: REPO_ROOT,
       codexHome: CODEX_HOME,
       backupDirectory,
@@ -1116,9 +1117,11 @@ async function installAfterSmoke(smoke, { dispatchMode = null } = {}) {
     },
     files: fileEntries,
   };
-  await writeJson(manifestPath, manifest);
 
+  let manifestPersisted = false;
   try {
+    await writeJson(manifestPath, manifest);
+    manifestPersisted = true;
     for (const entry of fileEntries) {
       if (entry.kind.startsWith("dispatch-")) continue;
       const source = entry.kind === "dispatch-policy"
@@ -1162,10 +1165,14 @@ async function installAfterSmoke(smoke, { dispatchMode = null } = {}) {
     );
     return { manifestPath, manifest };
   } catch (error) {
-    await rollbackFromManifest(manifestPath, {
-      force: true,
-      reason: error.message,
-    });
+    if (manifestPersisted) {
+      await rollbackFromManifest(manifestPath, {
+        force: true,
+        reason: error.message,
+      });
+    } else if (dispatchInstall !== null) {
+      await rollbackDispatchRuntime({ manifest: dispatchInstall, force: true });
+    }
     throw error;
   }
 }

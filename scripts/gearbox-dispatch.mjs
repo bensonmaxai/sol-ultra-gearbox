@@ -178,7 +178,7 @@ async function copyScopedEntry(source, target) {
     return;
   }
   if (!metadata.isFile()) throw new TypeError("read scope must contain only regular files and directories");
-  await atomicWrite(target, await readFile(source, "utf8"), 0o600);
+  await atomicWrite(target, await readFile(source), 0o600);
 }
 
 async function materializeReadScope(readScope) {
@@ -197,6 +197,16 @@ async function materializeReadScope(readScope) {
       const withinRoot = relative(sourceRoot, source);
       if (withinRoot === "" || withinRoot === ".." || withinRoot.startsWith(`..${sep}`)) {
         throw new TypeError("dispatch read scope escapes source workspace");
+      }
+      const canonicalSource = await realpath(source);
+      const canonicalWithinRoot = relative(sourceRoot, canonicalSource);
+      if (
+        canonicalSource !== source ||
+        canonicalWithinRoot === "" ||
+        canonicalWithinRoot === ".." ||
+        canonicalWithinRoot.startsWith(`..${sep}`)
+      ) {
+        throw new TypeError("dispatch read scope must not traverse symlinks");
       }
       await copyScopedEntry(source, join(workspace, scope));
     }

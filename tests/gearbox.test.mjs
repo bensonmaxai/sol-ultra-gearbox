@@ -11,6 +11,7 @@ import {
   CONFIG_V2_MARKER,
   ROLE_SPECS,
   WORKFLOW_POLICY,
+  atomicWrite,
   cleanupProbeArtifacts,
   DISPATCH_RUNTIME_FILES,
   installDispatchRuntime,
@@ -295,6 +296,33 @@ test("dispatch runtime install reads back exact targets and rollback restores a 
   await writeFile(runtime[0].targetPath, "content drift\n");
   await assert.rejects(rollbackDispatchRuntime({ manifest }), /content drift/);
   await rollbackDispatchRuntime({ manifest, force: true });
+  assert.deepEqual(await treeState(home), before);
+});
+
+test("dispatch runtime install rolls back every target after a mid-write failure", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "gearbox-dispatch-transaction-"));
+  const backups = await mkdtemp(join(tmpdir(), "gearbox-dispatch-transaction-backups-"));
+  t.after(() => Promise.all([
+    rm(home, { recursive: true, force: true }),
+    rm(backups, { recursive: true, force: true }),
+  ]));
+  const before = await treeState(home);
+  let writes = 0;
+  await assert.rejects(
+    installDispatchRuntime({
+      sourceRoot: REPO_ROOT,
+      codexHome: home,
+      backupDirectory: backups,
+      dispatchMode: "shadow",
+      writeTarget: async (...args) => {
+        writes += 1;
+        if (writes === 2) throw new Error("synthetic dispatch write failure");
+        return atomicWrite(...args);
+      },
+    }),
+    /synthetic dispatch write failure/,
+  );
+  assert.equal(writes, 2);
   assert.deepEqual(await treeState(home), before);
 });
 

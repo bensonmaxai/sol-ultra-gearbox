@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
@@ -92,7 +92,7 @@ async function fixture(t, { policy = true, policyMode = "shadow" } = {}) {
 
 async function fakeCodex(path) {
   const source = `#!/usr/bin/env node
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 const args = process.argv.slice(2);
@@ -101,7 +101,13 @@ const config = (key) => { for (let i = 0; i < args.length; i += 1) if (args[i] =
 const cwd = after("-C");
 const marker = /append ([^\\s]+) on a separate final line/.exec(args.at(-1))?.[1] ?? "MISSING";
 const mode = process.env.FAKE_CLI_MODE ?? "success";
-await writeFile(process.env.FAKE_CLI_LOG, JSON.stringify({ cwd, sentinelVisible: existsSync(join(cwd, "sentinel.txt")), allowedVisible: existsSync(join(cwd, "allowed", "visible.txt")) }));
+const binary = join(cwd, "allowed", "binary.bin");
+await writeFile(process.env.FAKE_CLI_LOG, JSON.stringify({
+  cwd,
+  sentinelVisible: existsSync(join(cwd, "sentinel.txt")),
+  allowedVisible: existsSync(join(cwd, "allowed", "visible.txt")),
+  binaryHex: existsSync(binary) ? readFileSync(binary).toString("hex") : null,
+}));
 if (mode === "scope_symlink") { await rm(cwd, { recursive: true, force: true }); await symlink(process.env.FAKE_CLI_ESCAPE, cwd); }
 const sessions = join(process.env.CODEX_HOME, "sessions", "fake");
 await mkdir(sessions, { recursive: true });
@@ -197,7 +203,10 @@ test("active isolated execution materializes only allowed read scope and never r
   t.after(() => Promise.all([rm(source, { recursive: true, force: true }), rm(escape, { recursive: true, force: true }), rm(isolatedTmp, { recursive: true, force: true })]));
   await mkdir(join(source, "allowed"));
   await writeFile(join(source, "allowed", "visible.txt"), "visible\n");
+  await writeFile(join(source, "allowed", "binary.bin"), Buffer.from([0x00, 0xff, 0x01, 0xfe]));
   await writeFile(join(source, "sentinel.txt"), "private\n");
+  await writeFile(join(escape, "secret.txt"), "outside scope\n");
+  await symlink(escape, join(source, "linked"));
   await writeFile(join(home, "auth.json"), "fixture auth\n");
   await mkdir(join(home, "agents"));
   await writeFile(join(home, "agents", "terra-explorer.toml"), await readFile(join(REPO_ROOT, "roles", "terra-explorer.toml"), "utf8"));
@@ -213,11 +222,20 @@ test("active isolated execution materializes only allowed read scope and never r
   assert.equal(success.code, 0, success.stdout);
   assert.equal(jsonOnly(success).status, "GEARBOX_DISPATCH_RESULT");
   assert.match(success.stdout, /verified/);
-  assert.deepEqual(JSON.parse(await readFile(log, "utf8")), {
-    cwd: JSON.parse(await readFile(log, "utf8")).cwd,
+  const successLog = JSON.parse(await readFile(log, "utf8"));
+  assert.deepEqual(successLog, {
+    cwd: successLog.cwd,
     sentinelVisible: false,
     allowedVisible: true,
+    binaryHex: "00ff01fe",
   });
+
+  await rm(log, { force: true });
+  await writeFile(path, `${JSON.stringify(packet({ readScope: ["linked/secret.txt"] }))}\n`);
+  const ancestorSymlink = await run(["run-isolated", "--packet", path, ...capabilityArgs], env, source);
+  assert.equal(ancestorSymlink.code, 1);
+  assert.deepEqual(jsonOnly(ancestorSymlink), { status: "GEARBOX_DISPATCH_OFF", mode: "off" });
+  await assert.rejects(access(log));
 
   for (const mode of ["model_mismatch", "marker_mismatch", "scope_symlink"]) {
     await writeFile(path, `${JSON.stringify(packet({ readScope: ["allowed"] }))}\n`, { mode: 0o600 });
