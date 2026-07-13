@@ -10,12 +10,14 @@ import {
   CONFIG_ROLES_MARKER,
   CONFIG_V2_MARKER,
   ROLE_SPECS,
+  WORKFLOW_POLICY,
   cleanupProbeArtifacts,
   redactSensitive,
   removeOwnedSmokeProjectEntries,
   renderAgentsMd,
   renderConfig,
   rollbackConfig,
+  validateTypedSpawnArgs,
   validateRoleText,
   verifyProbe,
 } from "../lib/gearbox.mjs";
@@ -146,6 +148,55 @@ test("renderAgentsMd replaces the workflow section and preserves neighbors", () 
   assert.equal(renderAgentsMd(output), output);
 });
 
+test("managed policy gates skill-driven delegation and unknown skills", () => {
+  assert.match(WORKFLOW_POLICY, /Skill-driven Delegation Compatibility Gate/);
+  assert.match(WORKFLOW_POLICY, /pre-spawn compatibility gate/);
+  assert.match(WORKFLOW_POLICY, /subagent-driven-development/);
+  assert.match(WORKFLOW_POLICY, /dispatching-parallel-agents/);
+  assert.match(WORKFLOW_POLICY, /requesting-code-review/);
+  assert.match(WORKFLOW_POLICY, /security-scan/);
+  assert.match(WORKFLOW_POLICY, /security-diff-scan/);
+  assert.match(WORKFLOW_POLICY, /sites:sites-building/);
+  assert.match(WORKFLOW_POLICY, /hatch-pet/);
+  assert.match(WORKFLOW_POLICY, /heygen:heygen-video/);
+  assert.match(WORKFLOW_POLICY, /unknown skill/i);
+  assert.match(WORKFLOW_POLICY, /fail closed/i);
+  assert.match(WORKFLOW_POLICY, /general-purpose/);
+  assert.match(WORKFLOW_POLICY, /不得.*靜默.*改寫/);
+  assert.match(WORKFLOW_POLICY, /非-Ultra root 下依序建立單一 typed child/);
+  assert.match(WORKFLOW_POLICY, /parent permission.*read-only/);
+  assert.match(WORKFLOW_POLICY, /Sol root 自行 task review/);
+});
+
+test("typed spawn validation rejects generic, untyped, and overridden children", () => {
+  const valid = {
+    agent_type: "terra_worker",
+    fork_turns: "none",
+    message: "bounded task",
+  };
+  assert.equal(validateTypedSpawnArgs(valid).pass, true);
+
+  for (const agentType of [undefined, "default", "general-purpose", "worker"]) {
+    const args = { ...valid };
+    if (agentType === undefined) delete args.agent_type;
+    else args.agent_type = agentType;
+    const result = validateTypedSpawnArgs(args);
+    assert.equal(result.pass, false, `agent_type=${agentType}`);
+    assert.equal(result.checks.knownTypedRole, false);
+  }
+
+  for (const override of [
+    { fork_turns: "all" },
+    { model: "gpt-5.6-terra" },
+    { reasoning_effort: "high" },
+    { model_reasoning_effort: "high" },
+    { service_tier: "priority" },
+    { message: "   " },
+  ]) {
+    assert.equal(validateTypedSpawnArgs({ ...valid, ...override }).pass, false);
+  }
+});
+
 test("all checked-in role files match their role specs", async () => {
   for (const spec of ROLE_SPECS) {
     const source = await readFile(join(REPO_ROOT, "roles", spec.sourceFile), "utf8");
@@ -189,6 +240,7 @@ test("cleanupProbeArtifacts removes only owned temporary directories", async (t)
   const owned = await Promise.all([
     mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-luna_clerk-")),
     mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-terra_max_worker-")),
+    mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-sdd-")),
   ]);
   const unrelated = await mkdtemp(join(tmpdir(), "unrelated-probe-"));
   t.after(() => rm(unrelated, { recursive: true, force: true }));
@@ -199,7 +251,7 @@ test("cleanupProbeArtifacts removes only owned temporary directories", async (t)
   );
 
   const result = await cleanupProbeArtifacts(owned);
-  assert.equal(result.removed.length, 2);
+  assert.equal(result.removed.length, 3);
   for (const path of owned) await assert.rejects(stat(path), /ENOENT/);
   await assert.rejects(
     cleanupProbeArtifacts([unrelated]),
@@ -259,6 +311,7 @@ test("verifyProbe requires typed lineage, exact runtime settings, and no descend
   assert.equal(result.checks.parentModelMatches, true);
   assert.equal(result.checks.parentEffortMatches, true);
   assert.equal(result.checks.parentTokenUsagePersisted, true);
+  assert.equal(result.checks.taskMessagePresent, true);
 
   const wrongParentEffort = verifyProbe({
     spec,
@@ -297,4 +350,44 @@ test("verifyProbe requires typed lineage, exact runtime settings, and no descend
   });
   assert.equal(untyped.pass, false);
   assert.equal(untyped.checks.typedRoleRequested, false);
+
+  const missingTaskMessage = verifyProbe({
+    spec,
+    parent: {
+      ...parent,
+      functionCalls: [
+        {
+          name: "spawn_agent",
+          args: { agent_type: "terra_worker", fork_turns: "none" },
+        },
+      ],
+    },
+    child,
+    marker: "ROLE_PROBE_OK:terra_worker",
+    parentExpected: { model: "gpt-5.6-sol", effort: "max" },
+  });
+  assert.equal(missingTaskMessage.pass, false);
+  assert.equal(missingTaskMessage.checks.taskMessagePresent, false);
+
+  const generic = verifyProbe({
+    spec,
+    parent: {
+      ...parent,
+      functionCalls: [
+        {
+          name: "spawn_agent",
+          args: {
+            agent_type: "general-purpose",
+            fork_turns: "none",
+            message: "x",
+          },
+        },
+      ],
+    },
+    child,
+    marker: "ROLE_PROBE_OK:terra_worker",
+    parentExpected: { model: "gpt-5.6-sol", effort: "max" },
+  });
+  assert.equal(generic.pass, false);
+  assert.equal(generic.checks.typedRoleRequested, false);
 });

@@ -13,11 +13,14 @@
     "test": "node --test",
     "doctor": "node scripts/gearbox.mjs doctor",
     "smoke": "node scripts/gearbox.mjs smoke --all",
+    "smoke:sdd": "node scripts/gearbox.mjs smoke-sdd",
     "apply": "node scripts/gearbox.mjs apply --promote-v2",
+    "cost:evidence": "node scripts/cost-evidence.mjs status",
     "skill:status": "node scripts/skill.mjs status",
     "skill:install": "node scripts/skill.mjs install",
     "skill:uninstall": "node scripts/skill.mjs uninstall",
-    "release:check": "node scripts/release-check.mjs"
+    "release:check": "node scripts/release-check.mjs",
+    "release:evidence": "node scripts/release-evidence.mjs generate"
   },
   "engines": {
     "node": ">=20"

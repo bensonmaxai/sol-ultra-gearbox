@@ -1,0 +1,176 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-13T14:28:05.437Z",
+  "source": {
+    "algorithm": "sha256",
+    "fileCount": 38,
+    "sha256": "046a093de861e5b16037ac7e256ca18c610940f99fd0f4eafb6f5f4879d8aaa4",
+    "commit": "fda2bfd9562844b886eb7f3ab8035afcf50b6c5e"
+  },
+  "tests": {
+    "status": "pass",
+    "command": "node --test --test-reporter=tap",
+    "total": 48,
+    "passed": 48,
+    "failed": 0
+  },
+  "runtime": {
+    "roleSmoke": {
+      "status": "pass",
+      "generatedAt": "2026-07-13T13:56:53.930Z",
+      "expectedRoleCount": 6,
+      "passedRoleCount": 6,
+      "rootVerified": true,
+      "commit": "47d5191b599d6fe0f62e79ca0772dc5d27873f6f",
+      "validatedAtCommit": "fda2bfd9562844b886eb7f3ab8035afcf50b6c5e",
+      "runtimeBindingSha256": "03cd3563f2aff5757cafa3d27d40bb391c9e465622a209671fc50640e5c992b0",
+      "roles": [
+        {
+          "role": "luna_clerk",
+          "model": "gpt-5.6-luna",
+          "effort": "low",
+          "sandbox": "read-only",
+          "parentTokens": 40334,
+          "childTokens": 26829,
+          "pass": true
+        },
+        {
+          "role": "terra_explorer",
+          "model": "gpt-5.6-terra",
+          "effort": "medium",
+          "sandbox": "read-only",
+          "parentTokens": 40871,
+          "childTokens": 27160,
+          "pass": true
+        },
+        {
+          "role": "terra_worker",
+          "model": "gpt-5.6-terra",
+          "effort": "high",
+          "sandbox": "workspace-write",
+          "parentTokens": 41510,
+          "childTokens": 56477,
+          "pass": true
+        },
+        {
+          "role": "sol_reviewer",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "sandbox": "read-only",
+          "parentTokens": 40347,
+          "childTokens": 41164,
+          "pass": true
+        },
+        {
+          "role": "terra_ultra_specialist",
+          "model": "gpt-5.6-terra",
+          "effort": "ultra",
+          "sandbox": "workspace-write",
+          "parentTokens": 41345,
+          "childTokens": 42042,
+          "pass": true
+        },
+        {
+          "role": "terra_max_worker",
+          "model": "gpt-5.6-terra",
+          "effort": "max",
+          "sandbox": "workspace-write",
+          "parentTokens": 41804,
+          "childTokens": 57052,
+          "pass": true
+        }
+      ]
+    },
+    "sddAdapter": {
+      "status": "pass",
+      "generatedAt": "2026-07-13T13:58:54.806Z",
+      "phases": [
+        "terra_worker",
+        "sol_reviewer"
+      ],
+      "permissionStrategy": "sequential_isolated_roots",
+      "verification": "adapter_contract",
+      "commit": "47d5191b599d6fe0f62e79ca0772dc5d27873f6f",
+      "validatedAtCommit": "fda2bfd9562844b886eb7f3ab8035afcf50b6c5e",
+      "runtimeBindingSha256": "03cd3563f2aff5757cafa3d27d40bb391c9e465622a209671fc50640e5c992b0"
+    }
+  },
+  "costEvidence": {
+    "kind": "real_work",
+    "observedRuntime": {
+      "schemaVersion": 1,
+      "kind": "real_work_child_runtime",
+      "generatedAt": "2026-07-13T13:45:00.000Z",
+      "scope": "child_only",
+      "parentThreadCount": 4,
+      "childSessionCount": 15,
+      "completedTurnCount": 24,
+      "runtimeMetadataVerifiedSessionCount": 15,
+      "forkNoneSessionCount": 15,
+      "nestedSpawnSessionCount": 0,
+      "policyCompliantSessionCount": 2,
+      "policyRejectedSessionCount": 13,
+      "permissionMismatchSessionCount": 13,
+      "spawnOverrideMismatchSessionCount": 1,
+      "roles": [
+        {
+          "role": "sol_reviewer",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "sessions": 6,
+          "completedTurns": 13,
+          "policyCompliantSessions": 0,
+          "policyRejectedSessions": 6,
+          "permissionMismatchSessions": 6,
+          "spawnOverrideMismatchSessions": 1,
+          "tokens": {
+            "uncachedInput": 695371,
+            "cachedInput": 9668352,
+            "output": 69929
+          }
+        },
+        {
+          "role": "terra_explorer",
+          "model": "gpt-5.6-terra",
+          "effort": "medium",
+          "sessions": 7,
+          "completedTurns": 8,
+          "policyCompliantSessions": 0,
+          "policyRejectedSessions": 7,
+          "permissionMismatchSessions": 7,
+          "spawnOverrideMismatchSessions": 0,
+          "tokens": {
+            "uncachedInput": 594377,
+            "cachedInput": 3254784,
+            "output": 40790
+          }
+        },
+        {
+          "role": "terra_worker",
+          "model": "gpt-5.6-terra",
+          "effort": "high",
+          "sessions": 2,
+          "completedTurns": 3,
+          "policyCompliantSessions": 2,
+          "policyRejectedSessions": 0,
+          "permissionMismatchSessions": 0,
+          "spawnOverrideMismatchSessions": 0,
+          "tokens": {
+            "uncachedInput": 332310,
+            "cachedInput": 6958848,
+            "output": 53726
+          }
+        }
+      ]
+    },
+    "completePairCount": 0,
+    "requiredPairCount": 10,
+    "eligibleForEstimate": false,
+    "estimatorPublished": false
+  },
+  "limitations": {
+    "coreRuntimeHook": "out_of_scope",
+    "costEstimator": "gated_until_10_complete_pairs"
+  },
+  "renderedMarkdownSha256": "65a2a4ff461be284d7c5f8519cdedd2c1b68b2997613b7dccdffeb9054b591a1"
+}

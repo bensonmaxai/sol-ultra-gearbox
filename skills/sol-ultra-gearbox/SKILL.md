@@ -1,6 +1,6 @@
 ---
 name: sol-ultra-gearbox
-description: Audit, verify, install, route, and roll back Codex Sol root modes plus typed Terra and Luna subagent configurations. Use when working with Sol Max or Ultra, multi-agent model routing, custom agent TOML files, spawn_agent schema visibility, role smoke tests, cost evidence, global Gearbox installation, or fail-closed rollback.
+description: Audit, verify, install, route, and roll back Codex Sol root modes plus typed Terra and Luna subagent configurations. Use when working with Sol Max or Ultra, multi-agent model routing, workflow-skill spawn compatibility, custom agent TOML files, spawn_agent schema visibility, role smoke tests, cost evidence, global Gearbox installation, or fail-closed rollback.
 ---
 
 # Sol Ultra Gearbox
@@ -23,6 +23,11 @@ global write, or public release.
 
 Read [references/routing-matrix.md](references/routing-matrix.md) before model
 or effort selection, changing role defaults, or deciding between Max and Ultra.
+
+Read
+[references/subagent-skill-compatibility.md](references/subagent-skill-compatibility.md)
+before any workflow skill dispatches, delegates, fans out, or calls
+`spawn_agent`.
 
 ## Run the least costly gate
 
@@ -74,10 +79,40 @@ Inspect the `spawn_agent` schema exposed in the current task.
 - Limit delegation to two direct children, depth 1, with no nested spawning.
 - Prefer read-only fan-out. Allow one writer per exclusive file scope.
 
+## Adapt skill-driven delegation
+
+Keep workflow skills active on the Sol root. They may own planning, task order,
+review loops, artifact handoffs, and acceptance criteria. Immediately before an
+actual child spawn, apply the compatibility gate:
+
+- do not select Sol Ultra merely because a workflow uses subagents; a known
+  sequential adapter may dispatch one typed child at a time from the lightest
+  sufficient Sol root;
+- translate generic implementer, explorer, clerk, and reviewer requests to a
+  known typed role;
+- preserve the workflow's semantics without inheriting its generic model or
+  agent defaults;
+- batch compatible independent work within the two-child limit;
+- require each parent permission mode to match the selected child sandbox; a
+  workspace-write parent must not launch the read-only reviewer merely to keep
+  an adapter shape intact;
+- keep external side effects, security findings, and final adjudication on the
+  Sol root;
+- fail closed for an unknown skill or an unresolvable conflict instead of
+  guessing a role or silently changing required concurrency.
+
+Use the compatibility matrix for the explicit
+`subagent-driven-development`, `dispatching-parallel-agents`,
+`requesting-code-review`, `security-scan`, and `security-diff-scan` adapters.
+The presence of words such as subagent, multi-agent, or spawn in documentation
+does not trigger the gate; an actual delegation intent does.
+
 ## Run live verification
 
 Run `npm run smoke` only after explicit owner approval because it consumes
-model credits. Stop on the first failure and do not retry automatically.
+model credits. The runner requires a clean Git tree and binds the evidence to
+the commit, global config hash, Codex version, role hashes, and runtime source
+hashes. Stop on the first failure and do not retry automatically.
 
 Require persisted evidence for:
 
@@ -89,6 +124,11 @@ Require persisted evidence for:
 - exact filesystem scope and expected marker;
 - identical global config contents before and after the isolated probe.
 
+Use `npm run smoke:sdd` for the disposable SDD adapter contract. It runs the
+write worker and read-only reviewer as sequential permission-matched phases,
+verifies the artifact handoff, and does not claim to exercise a Codex core
+hook.
+
 Mark missing runtime metadata as `unverified`; never infer cost savings from a
 role name or prose response.
 
@@ -96,7 +136,9 @@ role name or prose response.
 
 Preview global configuration with the dry-run command. Run
 `node scripts/gearbox.mjs apply --promote-v2` only with explicit owner approval
-and only after all live roles pass. Preserve the emitted manifest.
+and only after all live roles pass. An explicit `--reuse-smoke` report may
+avoid a duplicate paid run only when the fixed-TTL binding validator accepts
+the recent local evidence. Preserve the emitted manifest.
 
 If post-install validation fails, require automatic rollback. For a later
 manual rollback, use the exact manifest path and avoid `--force` unless the
@@ -108,9 +150,20 @@ the managed command; it disables the folder instead of deleting it.
 
 ## Prepare a public release
 
-Run unit tests, `npm run release:check`, the official skill validator when
+Generate the paired machine-readable and Markdown evidence with
+`npm run release:evidence -- --smoke <path> --sdd <path> --usage <path>`, then
+run unit tests, `npm run release:check`, the official skill validator when
 available, and a local secret scanner. Keep raw reports, auth state, complete
 user config, rollout contents, and private filesystem paths out of Git.
+
+Use the real-work ledger for comparable accepted tasks only. Smoke evidence is
+rejected, and no estimator or savings claim is allowed before ten complete
+`sol_single`/`gearbox` pairs.
+
+Record observed typed child runtime separately from paired evidence. Child-only
+session and token aggregates prove usage but do not reconstruct root cost or
+form an A/B pair. Preserve permission or spawn-argument mismatches as rejected
+policy evidence instead of silently counting them as accepted Gearbox samples.
 
 ## Report the result
 
