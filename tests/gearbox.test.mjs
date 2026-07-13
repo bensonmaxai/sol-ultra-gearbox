@@ -9,6 +9,8 @@ import {
   CONFIG_LEGACY_THREADS_MARKER,
   CONFIG_ROLES_MARKER,
   CONFIG_V2_MARKER,
+  MAX_DIRECT_CHILDREN,
+  MULTI_AGENT_SESSION_THREADS,
   ROLE_SPECS,
   WORKFLOW_POLICY,
   atomicWrite,
@@ -78,7 +80,9 @@ test("renderConfig adds only marker-delimited role and v2 blocks", () => {
   assert.match(output, /^\[agents\.luna_clerk\]$/m);
   assert.match(output, /^\[agents\.terra_worker\]$/m);
   assert.match(output, /^\[features\.multi_agent_v2\]$/m);
-  assert.match(output, /^max_concurrent_threads_per_session = 2$/m);
+  assert.equal(MAX_DIRECT_CHILDREN, 2);
+  assert.equal(MULTI_AGENT_SESSION_THREADS, MAX_DIRECT_CHILDREN + 1);
+  assert.match(output, /^max_concurrent_threads_per_session = 3$/m);
   assert.match(output, /^tool_namespace = "agents"$/m);
   assert.match(output, new RegExp(CONFIG_LEGACY_THREADS_MARKER));
   assert.doesNotMatch(output, /^max_threads\s*=/m);

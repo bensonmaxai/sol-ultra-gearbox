@@ -33,6 +33,8 @@ Apply these checks in order and stop at the first failure:
    no model, reasoning-effort, or service-tier override.
 8. Keep at most two direct children active, depth 1, no descendants, and one
    writer with an exclusive scope.
+   Configure three MultiAgentV2 session slots because the root consumes one;
+   the behavioral limit remains two direct children.
 9. Integrate, verify, close the child, and report persisted runtime identity as
    unverified when metadata is unavailable.
 

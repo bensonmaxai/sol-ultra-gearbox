@@ -56,3 +56,9 @@ hashes and modes, while status and public evidence redact the activation
 manifest path. Only the managed rollback command may consume that manifest to
 alter global state. Do not publish a savings percentage or estimator until ten
 comparable root-inclusive real-work pairs exist.
+
+Q10 proves exact typed fields, distinct non-empty task messages, declared
+disjoint scope mapping, persisted child identity, lineage, markers, tokens, no
+writers or descendants, and an unchanged fixture. Persisted prompt text is not
+treated as byte-identical scope telemetry, so do not claim observed per-file
+reads.

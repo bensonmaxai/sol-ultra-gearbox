@@ -81,6 +81,9 @@ Inspect the `spawn_agent` schema exposed in the current task.
 - Omit `model`, `reasoning_effort`, and `service_tier`; role TOML owns them.
 - Refuse untyped children that would inherit the parent model.
 - Limit delegation to two direct children, depth 1, with no nested spawning.
+- Keep three MultiAgentV2 session slots because the root occupies one; this
+  enables at most two simultaneous direct children and does not raise the
+  behavioral limit.
 - Prefer read-only fan-out. Allow one writer per exclusive file scope.
 
 ## Run quality-first managed dispatch
@@ -125,6 +128,11 @@ reports the policy digest and `allowTypedBridge=false`, and redacts the local
 manifest path. Only the managed rollback command may consume it to change global
 state. Do not claim a savings percentage before ten comparable root-inclusive
 real-work pairs exist.
+
+Treat Q10 scopes as declared routing evidence, not observed file-read telemetry.
+Require distinct non-empty task messages plus persisted child role, model,
+effort, sandbox, lineage, marker, token, descendant, writer, and filesystem
+evidence; do not require byte-identical persisted prompt text.
 
 ## Adapt skill-driven delegation
 

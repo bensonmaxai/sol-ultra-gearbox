@@ -26,6 +26,7 @@ import {
   CONFIG_ROLES_MARKER,
   CONFIG_V2_MARKER,
   DISPATCH_RUNTIME_FILES,
+  MULTI_AGENT_SESSION_THREADS,
   RUNTIME_BINDING_FILES,
   ROLE_SPECS,
   atomicWrite,
@@ -453,12 +454,31 @@ function spawnedChildren(parent, summaries) {
   );
 }
 
+export function validateAcceptanceParallelSpawn(args, expected) {
+  const message = typeof args?.message === "string" ? args.message : "";
+  const checks = {
+    exactKeys: JSON.stringify(Object.keys(args ?? {}).sort()) ===
+      JSON.stringify(["agent_type", "fork_turns", "message", "task_name"].sort()),
+    agentType: args?.agent_type === expected?.role,
+    taskName: args?.task_name === expected?.taskName,
+    forkTurnsNone: args?.fork_turns === "none",
+    messageExact: message === expected?.message,
+    messagePresent: message.trim().length > 0,
+    typedArgs: validateTypedSpawnArgs(args).pass,
+  };
+  const required = [
+    "exactKeys",
+    "agentType",
+    "taskName",
+    "forkTurnsNone",
+    "messagePresent",
+    "typedArgs",
+  ];
+  return { pass: required.every((key) => checks[key] === true), checks };
+}
+
 function exactParallelSpawn(args, expected) {
-  return JSON.stringify(Object.keys(args ?? {}).sort()) ===
-      JSON.stringify(["agent_type", "fork_turns", "message", "task_name"].sort()) &&
-    args.agent_type === expected.role && args.task_name === expected.taskName &&
-    args.fork_turns === "none" && args.message === expected.message &&
-    validateTypedSpawnArgs(args).pass;
+  return validateAcceptanceParallelSpawn(args, expected).pass;
 }
 
 function acceptanceChildFacts(child, expected, spawnArgs) {
@@ -471,7 +491,7 @@ function acceptanceChildFacts(child, expected, spawnArgs) {
     sandbox,
     writer: sandbox !== "read-only",
     descendants: (child?.functionCalls ?? []).filter((call) => call?.name?.endsWith("spawn_agent")).length,
-    readScope: exactParallelSpawn(spawnArgs, expected) ? expected.readScope : null,
+    declaredReadScope: exactParallelSpawn(spawnArgs, expected) ? expected.readScope : null,
     markerReturned: (child?.finalTexts ?? []).some((text) => text.trim() === expected.marker),
     runtimePersisted: Boolean(child?.sessionMeta && child?.turnContext),
     tokenUsage: child?.tokenUsage ?? null,
@@ -528,7 +548,7 @@ export async function runAcceptanceParallel(scenario, { decision = null } = {}) 
       `Do not pass model, reasoning_effort, model_reasoning_effort, or service_tier. Wait for both children. Do not edit files. After both exact child markers arrive, reply exactly ${parentMarker}.`,
     ].join("\n");
     const command = await runCommand(CODEX_BIN, [
-      "--strict-config", "-c", "features.multi_agent_v2.enabled=true", "-c", "features.multi_agent_v2.max_concurrent_threads_per_session=2",
+      "--strict-config", "-c", "features.multi_agent_v2.enabled=true", "-c", `features.multi_agent_v2.max_concurrent_threads_per_session=${MULTI_AGENT_SESSION_THREADS}`,
       "-c", "features.multi_agent_v2.hide_spawn_agent_metadata=false", "-c", 'features.multi_agent_v2.tool_namespace="agents"', "-c", "agents.max_depth=1",
       "-c", `agents.${luna.name}.description=${JSON.stringify(luna.description)}`, "-c", `agents.${luna.name}.config_file=${JSON.stringify(rolePath(luna))}`,
       "-c", `agents.${terra.name}.description=${JSON.stringify(terra.description)}`, "-c", `agents.${terra.name}.config_file=${JSON.stringify(rolePath(terra))}`,
@@ -541,17 +561,33 @@ export async function runAcceptanceParallel(scenario, { decision = null } = {}) 
     const parent = parents.length === 1 ? parents[0] : null;
     const children = spawnedChildren(parent, summaries);
     const spawnCalls = (parent?.functionCalls ?? []).filter((call) => call?.name?.endsWith("spawn_agent"));
+    const spawnChecks = ACCEPTANCE_PARALLEL_CHILDREN.map((expected) => {
+      const roleCalls = spawnCalls.filter((call) => call?.args?.agent_type === expected.role);
+      const args = roleCalls.length === 1 ? roleCalls[0].args : null;
+      const contract = validateAcceptanceParallelSpawn(args, expected);
+      return {
+        role: expected.role,
+        callCount: roleCalls.length,
+        keys: Object.keys(args ?? {}).sort(),
+        ...contract.checks,
+        spawnContract: contract.pass,
+        messageSha256: typeof args?.message === "string" ? sha256(args.message) : null,
+        expectedMessageSha256: sha256(expected.message),
+        exact: contract.pass,
+      };
+    });
+    const messageHashes = spawnChecks.map((check) => check.messageSha256);
+    const messagesDistinct = messageHashes.every((hash) => typeof hash === "string") &&
+      new Set(messageHashes).size === ACCEPTANCE_PARALLEL_CHILDREN.length;
     const validSpawns = spawnCalls.length === ACCEPTANCE_PARALLEL_CHILDREN.length &&
-      ACCEPTANCE_PARALLEL_CHILDREN.every((expected) =>
-        spawnCalls.filter((call) => exactParallelSpawn(call?.args, expected)).length === 1,
-      );
+      spawnChecks.every((check) => check.exact) && messagesDistinct;
     const childFacts = children.map((child) => {
       const role = child?.sessionMeta?.agent_role ?? child?.sessionMeta?.source?.subagent?.thread_spawn?.agent_role;
       const expected = ACCEPTANCE_PARALLEL_CHILDREN.find((entry) => entry.role === role);
       const spawnCall = spawnCalls.find((call) => call?.args?.agent_type === role);
       return expected
         ? acceptanceChildFacts(child, expected, spawnCall?.args)
-        : { role, model: null, effort: null, depth: null, sandbox: null, writer: true, descendants: 0, readScope: null, markerReturned: false, runtimePersisted: false, tokenUsage: null };
+        : { role, model: null, effort: null, depth: null, sandbox: null, writer: true, descendants: 0, declaredReadScope: null, markerReturned: false, runtimePersisted: false, tokenUsage: null };
     });
     const parentId = parent?.sessionId ?? parent?.sessionMeta?.id ?? parent?.sessionMeta?.session_id;
     const childIds = children.map((child) => child?.sessionId ?? child?.sessionMeta?.id ?? child?.sessionMeta?.session_id);
@@ -568,6 +604,8 @@ export async function runAcceptanceParallel(scenario, { decision = null } = {}) 
       writerCount: 0,
       descendantCount: childFacts.reduce((count, child) => count + child.descendants, 0),
       spawnsExact: validSpawns,
+      messagesDistinct,
+      spawnChecks,
       lineageExact,
       filesystemUnchanged,
       parentMarkerReturned,

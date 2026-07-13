@@ -48,6 +48,8 @@ automatic route or the default upgrade from `terra_worker`.
 - Always use `fork_turns="none"` for typed roles. Let role TOML own model,
   reasoning effort, and sandbox settings.
 - Allow at most two direct children, depth 1, and no descendant agents.
+- Reserve three MultiAgentV2 session slots because the root consumes one slot;
+  this enables, but never exceeds, two simultaneous direct children.
 - Prefer multiple readers and one writer. A writer must own an exclusive file
   scope.
 - Read persisted rollout metadata instead of trusting a model's prose claim
@@ -129,6 +131,11 @@ not retry. Trusted current ten-question acceptance evidence and an applied
 activation manifest are required before first active mode. A hard active-mode
 failure stops delegation; the manifest path is redacted from public output, and
 only the managed rollback command can consume it to alter global state.
+
+Q10 verifies exact typed fields, two distinct non-empty task messages, declared
+disjoint scope mapping, persisted child identity, lineage, markers, tokens, no
+writers or descendants, and an unchanged fixture. It does not claim observed
+per-file read telemetry or byte-identical prompt persistence.
 
 The exact root workflow is: build packet, load policy, plan, complete
 `root_inline` in Sol or execute/validate the selected `typed_child` or

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readdir } from "node:fs/promises";
 import test from "node:test";
 import {
+  ACCEPTANCE_PARALLEL_CHILDREN,
   ACCEPTANCE_SCENARIOS,
   attachAcceptanceMetadata,
   createAcceptancePacket,
@@ -14,7 +15,10 @@ import {
 import { REQUIRED_CHECKS } from "../lib/dispatch-evidence.mjs";
 import { ROLE_SPECS, sha256 } from "../lib/gearbox.mjs";
 import { createRuntimeBinding } from "../lib/runtime-evidence.mjs";
-import { runAcceptanceIsolated } from "../scripts/gearbox.mjs";
+import {
+  runAcceptanceIsolated,
+  validateAcceptanceParallelSpawn,
+} from "../scripts/gearbox.mjs";
 
 const EXPECTED = Object.freeze([
   ["Q1_ROOT_TRIVIAL", "root_inline", "ROOT_TRIVIAL"],
@@ -56,12 +60,13 @@ function question(scenario, overrides = {}) {
     result.topology = {
       parent: { model: "gpt-5.6-sol", effort: "ultra", runtimePersisted: true, tokenUsage: { total_tokens: 3 } },
       children: [
-        { role: "luna_clerk", model: "gpt-5.6-luna", effort: "low", depth: 1, sandbox: "read-only", writer: false, descendants: 0, readScope: "reader-a.txt", markerReturned: true, runtimePersisted: true, tokenUsage: { total_tokens: 1 } },
-        { role: "terra_explorer", model: "gpt-5.6-terra", effort: "medium", depth: 1, sandbox: "read-only", writer: false, descendants: 0, readScope: "reader-b.txt", markerReturned: true, runtimePersisted: true, tokenUsage: { total_tokens: 1 } },
+        { role: "luna_clerk", model: "gpt-5.6-luna", effort: "low", depth: 1, sandbox: "read-only", writer: false, descendants: 0, declaredReadScope: "reader-a.txt", markerReturned: true, runtimePersisted: true, tokenUsage: { total_tokens: 1 } },
+        { role: "terra_explorer", model: "gpt-5.6-terra", effort: "medium", depth: 1, sandbox: "read-only", writer: false, descendants: 0, declaredReadScope: "reader-b.txt", markerReturned: true, runtimePersisted: true, tokenUsage: { total_tokens: 1 } },
       ],
       writerCount: 0,
       descendantCount: 0,
       spawnsExact: true,
+      messagesDistinct: true,
       lineageExact: true,
       filesystemUnchanged: true,
       parentMarkerReturned: true,
@@ -156,6 +161,23 @@ test("isolated acceptance deliverables require exact structured results", () => 
   assert.equal(validateAcceptanceDeliverable("Q3_ISOLATED_TERRA", '{"filenames":["trace-0.txt","trace-1.txt","trace-2.txt","trace-3.txt","trace-4.txt"]}'), true);
   assert.equal(validateAcceptanceDeliverable("Q3_ISOLATED_TERRA", '{"filenames":["trace-4.txt","trace-3.txt","trace-2.txt","trace-1.txt","trace-0.txt"]}'), false);
   assert.equal(validateAcceptanceDeliverable("Q3_ISOLATED_TERRA", "```json\n{}\n```"), false);
+});
+
+test("parallel acceptance requires exact typed fields and a distinct non-empty task message", () => {
+  const expected = ACCEPTANCE_PARALLEL_CHILDREN[0];
+  const args = {
+    agent_type: expected.role,
+    fork_turns: "none",
+    message: `Execute this exact bounded contract. ${expected.message}`,
+    task_name: expected.taskName,
+  };
+  const valid = validateAcceptanceParallelSpawn(args, expected);
+  assert.equal(valid.pass, true);
+  assert.equal(valid.checks.messageExact, false);
+  assert.equal(valid.checks.messagePresent, true);
+  assert.equal(validateAcceptanceParallelSpawn({ ...args, message: "" }, expected).pass, false);
+  assert.equal(validateAcceptanceParallelSpawn({ ...args, task_name: "wrong" }, expected).pass, false);
+  assert.equal(validateAcceptanceParallelSpawn({ ...args, model: "gpt-5.6-luna" }, expected).pass, false);
 });
 
 test("production isolated executor accepts only its exact scenario deliverable", async () => {
@@ -333,6 +355,7 @@ test("parallel acceptance rejects child runtime drift, inferred writers, or weak
     (topology) => { topology.children[0].model = "gpt-5.6-sol"; },
     (topology) => { topology.children[1].writer = true; topology.writerCount = 1; },
     (topology) => { topology.lineageExact = false; },
+    (topology) => { topology.messagesDistinct = false; },
     (topology) => { topology.filesystemUnchanged = false; },
   ]) {
     const report = await runAcceptanceExam({
