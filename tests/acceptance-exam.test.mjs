@@ -2,12 +2,18 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ACCEPTANCE_SCENARIOS,
+  attachAcceptanceMetadata,
   createAcceptancePacket,
+  evaluateAcceptanceViolation,
   planAcceptanceScenario,
   runAcceptanceExam,
+  validateAcceptanceDeliverable,
+  validateAcceptanceEvidence,
 } from "../lib/acceptance-exam.mjs";
-import { ROLE_SPECS } from "../lib/gearbox.mjs";
+import { REQUIRED_CHECKS } from "../lib/dispatch-evidence.mjs";
+import { ROLE_SPECS, sha256 } from "../lib/gearbox.mjs";
 import { createRuntimeBinding } from "../lib/runtime-evidence.mjs";
+import { runAcceptanceIsolated } from "../scripts/gearbox.mjs";
 
 const EXPECTED = Object.freeze([
   ["Q1_ROOT_TRIVIAL", "root_inline", "ROOT_TRIVIAL"],
@@ -49,14 +55,47 @@ function question(scenario, overrides = {}) {
     result.topology = {
       parent: { model: "gpt-5.6-sol", effort: "ultra", runtimePersisted: true, tokenUsage: { total_tokens: 3 } },
       children: [
-        { role: "luna_clerk", depth: 1, sandbox: "read-only", writer: false, descendants: 0, readScope: "fixtures/a", runtimePersisted: true, tokenUsage: { total_tokens: 1 } },
-        { role: "terra_explorer", depth: 1, sandbox: "read-only", writer: false, descendants: 0, readScope: "fixtures/b", runtimePersisted: true, tokenUsage: { total_tokens: 1 } },
+        { role: "luna_clerk", model: "gpt-5.6-luna", effort: "low", depth: 1, sandbox: "read-only", writer: false, descendants: 0, readScope: "reader-a.txt", markerReturned: true, runtimePersisted: true, tokenUsage: { total_tokens: 1 } },
+        { role: "terra_explorer", model: "gpt-5.6-terra", effort: "medium", depth: 1, sandbox: "read-only", writer: false, descendants: 0, readScope: "reader-b.txt", markerReturned: true, runtimePersisted: true, tokenUsage: { total_tokens: 1 } },
       ],
       writerCount: 0,
       descendantCount: 0,
+      spawnsExact: true,
+      lineageExact: true,
+      filesystemUnchanged: true,
+      parentMarkerReturned: true,
     };
   }
   return result;
+}
+
+function dispatchEvidence() {
+  const roleSpec = ROLE_SPECS.find((role) => role.name === "luna_clerk");
+  const decision = {
+    selectedShape: "isolated_role_root",
+    role: roleSpec.name,
+    reasonCode: "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH",
+    taskHash: "a".repeat(64),
+    roleHash: "b".repeat(64),
+  };
+  const checks = Object.fromEntries(REQUIRED_CHECKS.map((name) => [name, true]));
+  const result = {
+    schemaVersion: 1,
+    kind: "dispatch_result",
+    pass: true,
+    taskHash: decision.taskHash,
+    executionShape: decision.selectedShape,
+    role: decision.role,
+    reasonCode: decision.reasonCode,
+    expected: { model: roleSpec.model, effort: roleSpec.effort, sandbox: roleSpec.sandbox, depth: 0, roleHash: decision.roleHash },
+    actual: { model: roleSpec.model, effort: roleSpec.effort, sandbox: roleSpec.sandbox, depth: 0, parentTokens: 11, childTokens: null, nativeAgentRole: null },
+    checks,
+    changedFiles: [],
+    retryCount: 0,
+    rollbackRequired: false,
+    synthetic: false,
+  };
+  return { result, decision, roleSpec };
 }
 
 function executors(overrides = {}) {
@@ -96,6 +135,78 @@ test("scenario packets obtain their expected decision from the planner and rejec
   }), /acceptance scenario decision drift/);
 });
 
+test("isolated acceptance deliverables require exact structured results", () => {
+  assert.equal(validateAcceptanceDeliverable("Q2_ISOLATED_LUNA", '{"count":25}'), true);
+  assert.equal(validateAcceptanceDeliverable("Q2_ISOLATED_LUNA", '{"count":"25"}'), false);
+  assert.equal(validateAcceptanceDeliverable("Q2_ISOLATED_LUNA", '{"count":25,"claim":true}'), false);
+  assert.equal(validateAcceptanceDeliverable("Q3_ISOLATED_TERRA", '{"filenames":["trace-0.txt","trace-1.txt","trace-2.txt","trace-3.txt","trace-4.txt"]}'), true);
+  assert.equal(validateAcceptanceDeliverable("Q3_ISOLATED_TERRA", '{"filenames":["trace-4.txt","trace-3.txt","trace-2.txt","trace-1.txt","trace-0.txt"]}'), false);
+  assert.equal(validateAcceptanceDeliverable("Q3_ISOLATED_TERRA", "```json\n{}\n```"), false);
+});
+
+test("production isolated executor accepts only its exact scenario deliverable", async () => {
+  for (const [scenario, deliverable] of [
+    [ACCEPTANCE_SCENARIOS[1], '{"count":25}'],
+    [ACCEPTANCE_SCENARIOS[2], '{"filenames":["trace-0.txt","trace-1.txt","trace-2.txt","trace-3.txt","trace-4.txt"]}'],
+  ]) {
+    const decision = planAcceptanceScenario({
+      scenario,
+      policy: { mode: "active", allowTypedBridge: false },
+      capabilities: { agentTypeVisible: true, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
+      roleSpecs: ROLE_SPECS,
+    });
+    const executeIsolatedRole = async ({ roleSpec, roleSource, taskHash, onDeliverable }) => {
+      const accepted = await onDeliverable(deliverable);
+      const checks = Object.fromEntries(REQUIRED_CHECKS.map((name) => [name, true]));
+      checks.deliverableValid = accepted;
+      return {
+        schemaVersion: 1,
+        kind: "dispatch_result",
+        pass: accepted,
+        taskHash,
+        executionShape: "isolated_role_root",
+        role: roleSpec.name,
+        reasonCode: "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH",
+        expected: { model: roleSpec.model, effort: roleSpec.effort, sandbox: roleSpec.sandbox, depth: 0, roleHash: sha256(roleSource) },
+        actual: { model: roleSpec.model, effort: roleSpec.effort, sandbox: roleSpec.sandbox, depth: 0, parentTokens: 7, childTokens: null, nativeAgentRole: null },
+        checks,
+        changedFiles: [],
+        retryCount: 0,
+        rollbackRequired: false,
+        synthetic: false,
+      };
+    };
+    const accepted = await runAcceptanceIsolated(scenario, { decision, executeIsolatedRole });
+    assert.equal(accepted.pass, true);
+    assert.equal(accepted.cleanup.pass, true);
+    assert.equal(accepted.dispatchEvidence.result.checks.deliverableValid, true);
+
+    const rejected = await runAcceptanceIsolated(scenario, {
+      decision,
+      executeIsolatedRole: (options) => executeIsolatedRole({ ...options, onDeliverable: () => options.onDeliverable('{"wrong":true}') }),
+    });
+    assert.equal(rejected.pass, false);
+    assert.equal(rejected.cleanup.pass, true);
+  }
+});
+
+test("negative acceptance uses the real dispatch validator and classifier", () => {
+  const evidence = dispatchEvidence();
+  const runtime = evaluateAcceptanceViolation({ ...evidence, violation: "runtime_mismatch" });
+  assert.deepEqual(
+    { pass: runtime.pass, rejected: runtime.rejected, violationDetected: runtime.violationDetected, reasonCode: runtime.reasonCode },
+    { pass: true, rejected: true, violationDetected: true, reasonCode: "ROOT_RUNTIME_EVIDENCE_FAILED" },
+  );
+  const filesystem = evaluateAcceptanceViolation({ ...evidence, violation: "filesystem_write" });
+  assert.deepEqual(
+    { pass: filesystem.pass, rejected: filesystem.rejected, violationDetected: filesystem.violationDetected, reasonCode: filesystem.reasonCode },
+    { pass: true, rejected: true, violationDetected: true, reasonCode: "ROOT_PERMISSION_VIOLATION" },
+  );
+  const invalidBase = structuredClone(evidence);
+  invalidBase.result.actual.model = "gpt-5.6-invalid";
+  assert.equal(evaluateAcceptanceViolation({ ...invalidBase, violation: "runtime_mismatch" }).pass, false);
+});
+
 test("acceptance exam requires all ten current, persisted, cleaned results", async () => {
   const currentBinding = binding();
   const report = await runAcceptanceExam({
@@ -111,6 +222,20 @@ test("acceptance exam requires all ten current, persisted, cleaned results", asy
   assert.equal(report.runtimeBindingAfterSha256, currentBinding.sha256);
   assert.equal(report.runtimeBindingStable, true);
   assert.equal(report.globalConfigUnchanged, true);
+  assert.equal(validateAcceptanceEvidence(report).pass, true);
+  const decorated = attachAcceptanceMetadata(report, {
+    reportDirectory: "/private/reports/current",
+    reuse: { mode: "trusted_recent_acceptance" },
+  });
+  assert.equal(decorated.reportDirectory, "/private/reports/current");
+  assert.equal(decorated.reuse.mode, "trusted_recent_acceptance");
+  assert.equal(validateAcceptanceEvidence(decorated).pass, true);
+  assert.equal(Object.keys(decorated).includes("reportDirectory"), false);
+  assert.equal(Object.keys(decorated).includes("reuse"), false);
+  assert.equal(validateAcceptanceEvidence({ ...report, rawPrompt: "must not escape" }).pass, false);
+  const leakedQuestion = structuredClone(report);
+  leakedQuestion.questions[0].rawResult = { secret: true };
+  assert.equal(validateAcceptanceEvidence(leakedQuestion).pass, false);
 });
 
 test("acceptance exam fails closed for a skipped question, missing metadata, stale binding, or cleanup failure", async () => {
@@ -177,4 +302,29 @@ test("negative questions pass only after the injected violation is detected, rej
     }),
   });
   assert.equal(unsafe.pass, false);
+});
+
+test("parallel acceptance rejects child runtime drift, inferred writers, or weak lineage", async () => {
+  const currentBinding = binding();
+  for (const mutate of [
+    (topology) => { topology.children[0].model = "gpt-5.6-sol"; },
+    (topology) => { topology.children[1].writer = true; topology.writerCount = 1; },
+    (topology) => { topology.lineageExact = false; },
+    (topology) => { topology.filesystemUnchanged = false; },
+  ]) {
+    const report = await runAcceptanceExam({
+      policy: { allowTypedBridge: false },
+      roleSmoke: { pass: true, roles: [{ role: "terra_worker", pass: true }] },
+      runtimeBinding: currentBinding,
+      readGlobalConfig: async () => "config",
+      ...executors({
+        executeParallel: async (scenario) => {
+          const result = question(scenario);
+          mutate(result.topology);
+          return result;
+        },
+      }),
+    });
+    assert.equal(report.pass, false);
+  }
 });

@@ -8,6 +8,8 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
+  readlink,
   realpath,
   rename,
   stat,
@@ -48,7 +50,15 @@ import {
   writeJson,
 } from "../lib/gearbox.mjs";
 import { runIsolatedRole } from "../lib/dispatch-runner.mjs";
-import { planAcceptanceScenario, runAcceptanceExam } from "../lib/acceptance-exam.mjs";
+import {
+  ACCEPTANCE_PARALLEL_CHILDREN,
+  attachAcceptanceMetadata,
+  evaluateAcceptanceViolation,
+  planAcceptanceScenario,
+  runAcceptanceExam,
+  validateAcceptanceDeliverable,
+} from "../lib/acceptance-exam.mjs";
+import { validateDispatchResult } from "../lib/dispatch-evidence.mjs";
 import {
   assertManagedPolicyTarget,
   createDispatchPolicy,
@@ -279,7 +289,10 @@ async function loadTrustedAcceptance(reportPath) {
     const failed = Object.entries(validation.checks).filter(([, pass]) => !pass).map(([name]) => name).join(", ");
     throw new Error(`Trusted acceptance reuse rejected: ${failed}`);
   }
-  return { ...report, reportDirectory: dirname(actualPath), reuse: { mode: "trusted_recent_acceptance", validatedAt: new Date().toISOString(), ageMs: validation.ageMs, ttlMs: validation.ttlMs } };
+  return attachAcceptanceMetadata(report, {
+    reportDirectory: dirname(actualPath),
+    reuse: { mode: "trusted_recent_acceptance", validatedAt: new Date().toISOString(), ageMs: validation.ageMs, ttlMs: validation.ttlMs },
+  });
 }
 
 function acceptanceRuntime(summary) {
@@ -300,11 +313,11 @@ async function singleRootSummary(sessionRoot, cwd, sinceMs) {
   return roots.length === 1 ? roots[0] : null;
 }
 
-function acceptanceResult(scenario, values = {}) {
+function acceptanceResult(scenario, { decision = null, ...values } = {}) {
   return {
     id: scenario.id,
-    selectedShape: scenario.selectedShape,
-    reasonCode: scenario.reasonCode,
+    selectedShape: decision?.selectedShape ?? null,
+    reasonCode: decision?.reasonCode ?? null,
     pass: false,
     runtime: null,
     cleanup: { pass: false },
@@ -312,7 +325,26 @@ function acceptanceResult(scenario, values = {}) {
   };
 }
 
-async function runAcceptanceRoot(scenario) {
+export async function runAcceptanceRoot(scenario, { decision = null, priorResults = new Map() } = {}) {
+  if (scenario.id === "Q8_RUNTIME_MISMATCH_REJECTED" || scenario.id === "Q9_WRITE_VIOLATION_REJECTED") {
+    const evidence = priorResults.get("Q2_ISOLATED_LUNA")?.dispatchEvidence;
+    if (!evidence) return acceptanceResult(scenario, { decision, hardFailure: "runtime" });
+    const evaluated = evaluateAcceptanceViolation({
+      ...evidence,
+      violation: scenario.id === "Q8_RUNTIME_MISMATCH_REJECTED"
+        ? "runtime_mismatch"
+        : "filesystem_write",
+    });
+    return acceptanceResult(scenario, {
+      decision: { selectedShape: evaluated.selectedShape, reasonCode: evaluated.reasonCode },
+      pass: evaluated.pass,
+      runtime: evaluated.runtime,
+      cleanup: evaluated.cleanup,
+      violationDetected: evaluated.violationDetected,
+      rejected: evaluated.rejected,
+      hardFailure: evaluated.pass ? null : "runtime",
+    });
+  }
   const fixture = await mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-luna_clerk-"));
   const probeHome = await mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-home-luna_clerk-"));
   const authLink = join(probeHome, "auth.json");
@@ -336,33 +368,19 @@ async function runAcceptanceRoot(scenario) {
     const runtime = acceptanceRuntime(summary);
     const clean = (summary?.functionCalls ?? []).filter((call) => call?.name?.endsWith("spawn_agent")).length === 0;
     const markerReturned = (summary?.finalTexts ?? []).some((text) => text.includes(marker));
-    let violationDetected = false;
-    let rejected = false;
-    if (scenario.id === "Q8_RUNTIME_MISMATCH_REJECTED") {
-      const injected = { ...runtime, model: "gpt-5.6-invalid" };
-      violationDetected = injected.model !== "gpt-5.6-sol";
-      rejected = violationDetected;
-    }
-    if (scenario.id === "Q9_WRITE_VIOLATION_REJECTED") {
-      await writeFile(join(fixture, "fixture.txt"), "INJECTED_WRITE\n", "utf8");
-      violationDetected = (await readFile(join(fixture, "fixture.txt"), "utf8")) !== "BEFORE\n";
-      rejected = violationDetected;
-      await writeFile(join(fixture, "fixture.txt"), "BEFORE\n", "utf8");
-    }
     const fixtureContent = await readFile(join(fixture, "fixture.txt"), "utf8");
     const filesystemPass = scenario.id === "Q1_ROOT_TRIVIAL"
       ? fixtureContent === "AFTER\n"
       : fixtureContent === "BEFORE\n";
     answer = acceptanceResult(scenario, {
+      decision,
       pass: command.code === 0 && !command.timedOut && clean && markerReturned && filesystemPass && runtime.persisted,
       runtime,
       cleanup: { pass: false },
-      violationDetected,
-      rejected,
       hardFailure: command.code === 0 && !command.timedOut ? null : "runtime",
     });
   } catch {
-    answer = acceptanceResult(scenario, { hardFailure: "runtime" });
+    answer = acceptanceResult(scenario, { decision, hardFailure: "runtime" });
   } finally {
     await unlink(authLink).catch(() => {});
     try {
@@ -375,7 +393,12 @@ async function runAcceptanceRoot(scenario) {
   return { ...answer, cleanup: { pass: cleanup } };
 }
 
-async function runAcceptanceIsolated(scenario) {
+export async function runAcceptanceIsolated(scenario, {
+  decision = null,
+  executeIsolatedRole = runIsolatedRole,
+  codexBin = CODEX_BIN,
+  codexHome = CODEX_HOME,
+} = {}) {
   const roleName = scenario.id === "Q2_ISOLATED_LUNA" ? "luna_clerk" : "terra_explorer";
   const spec = ROLE_SPECS.find((role) => role.name === roleName);
   const fixture = await mkdtemp(join(tmpdir(), `sol-ultra-gearbox-v2-dispatch-${roleName}-`));
@@ -386,21 +409,38 @@ async function runAcceptanceIsolated(scenario) {
     await writeFile(join(fixture, "records.txt"), `${records}\n`, "utf8");
     for (let index = 0; index < 5; index += 1) await writeFile(join(fixture, `trace-${index}.txt`), `trace ${index}\n`, "utf8");
     const task = roleName === "luna_clerk"
-      ? "Read records.txt and report the count of structured records."
-      : "Trace the five trace-*.txt files and report their filenames.";
-    const result = await runIsolatedRole({
-      codexBin: CODEX_BIN, codexHome: CODEX_HOME, roleSpec: spec,
+      ? "Read only records.txt. Count its non-empty records. Return exactly one JSON object with no markdown and no extra keys: {\"count\":25}."
+      : "Read only the five trace-*.txt files. Return exactly one JSON object with no markdown and the filenames sorted ascending under the sole key filenames: {\"filenames\":[\"trace-0.txt\",\"trace-1.txt\",\"trace-2.txt\",\"trace-3.txt\",\"trace-4.txt\"]}.";
+    let deliverableValid = false;
+    const result = await executeIsolatedRole({
+      codexBin, codexHome, roleSpec: spec,
       roleSource: await readFile(rolePath(spec), "utf8"), cwd: fixture, task,
-      taskHash: sha256(task), onDeliverable: async () => true,
+      taskHash: sha256(task),
+      onDeliverable: async (value) => {
+        deliverableValid = validateAcceptanceDeliverable(scenario.id, value);
+        return deliverableValid;
+      },
     });
+    const runnerDecision = {
+      selectedShape: result.executionShape,
+      role: result.role,
+      reasonCode: result.reasonCode,
+      taskHash: result.taskHash,
+      roleHash: result.expected?.roleHash,
+    };
+    const validation = validateDispatchResult({ result, decision: runnerDecision, roleSpec: spec });
+    const plannerMatches = decision?.selectedShape === runnerDecision.selectedShape &&
+      decision?.reasonCode === runnerDecision.reasonCode && decision?.role === runnerDecision.role;
     answer = acceptanceResult(scenario, {
-      pass: result.pass,
+      decision: runnerDecision,
+      pass: result.pass && validation.pass && plannerMatches && deliverableValid,
       runtime: { persisted: result.checks?.runtimePersisted === true, model: result.actual?.model, effort: result.actual?.effort, tokenUsage: { total_tokens: result.actual?.parentTokens } },
       cleanup: { pass: false },
-      hardFailure: result.rollbackRequired ? "runtime" : null,
+      hardFailure: result.rollbackRequired || !validation.pass ? "runtime" : null,
+      dispatchEvidence: { result, decision: runnerDecision, roleSpec: spec },
     });
   } catch {
-    answer = acceptanceResult(scenario, { hardFailure: "runtime" });
+    answer = acceptanceResult(scenario, { decision, hardFailure: "runtime" });
   } finally {
     try {
       const removed = await cleanupProbeArtifacts([fixture]);
@@ -417,20 +457,54 @@ function spawnedChildren(parent, summaries) {
   );
 }
 
-function acceptanceChildFacts(child, readScope) {
+function exactParallelSpawn(args, expected) {
+  return JSON.stringify(Object.keys(args ?? {}).sort()) ===
+      JSON.stringify(["agent_type", "fork_turns", "message", "task_name"].sort()) &&
+    args.agent_type === expected.role && args.task_name === expected.taskName &&
+    args.fork_turns === "none" && args.message === expected.message &&
+    validateTypedSpawnArgs(args).pass;
+}
+
+function acceptanceChildFacts(child, expected, spawnArgs) {
+  const sandbox = child?.turnContext?.sandbox_policy?.type ?? null;
   return {
     role: child?.sessionMeta?.agent_role ?? child?.sessionMeta?.source?.subagent?.thread_spawn?.agent_role ?? null,
+    model: child?.turnContext?.model ?? null,
+    effort: child?.turnContext?.effort ?? null,
     depth: child?.sessionMeta?.source?.subagent?.thread_spawn?.depth ?? null,
-    sandbox: child?.turnContext?.sandbox_policy?.type ?? null,
-    writer: false,
+    sandbox,
+    writer: sandbox !== "read-only",
     descendants: (child?.functionCalls ?? []).filter((call) => call?.name?.endsWith("spawn_agent")).length,
-    readScope,
+    readScope: exactParallelSpawn(spawnArgs, expected) ? expected.readScope : null,
+    markerReturned: (child?.finalTexts ?? []).some((text) => text.trim() === expected.marker),
     runtimePersisted: Boolean(child?.sessionMeta && child?.turnContext),
     tokenUsage: child?.tokenUsage ?? null,
   };
 }
 
-async function runAcceptanceParallel(scenario) {
+async function snapshotAcceptanceTree(root) {
+  const entries = {};
+  async function visit(path) {
+    const metadata = await lstat(path);
+    const key = relative(root, path) || ".";
+    if (metadata.isSymbolicLink()) {
+      entries[key] = { type: "symlink", mode: metadata.mode & 0o7777, target: await readlink(path) };
+      return;
+    }
+    if (metadata.isDirectory()) {
+      entries[key] = { type: "directory", mode: metadata.mode & 0o7777 };
+      for (const name of (await readdir(path)).sort()) await visit(join(path, name));
+      return;
+    }
+    entries[key] = metadata.isFile()
+      ? { type: "file", mode: metadata.mode & 0o7777, sha256: sha256(await readFile(path)) }
+      : { type: "other", mode: metadata.mode & 0o7777 };
+  }
+  await visit(root);
+  return entries;
+}
+
+export async function runAcceptanceParallel(scenario, { decision = null } = {}) {
   const fixture = await mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-luna_clerk-"));
   const probeHome = await mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-home-luna_clerk-"));
   const authLink = join(probeHome, "auth.json");
@@ -439,16 +513,23 @@ async function runAcceptanceParallel(scenario) {
   try {
     await writeFile(join(fixture, "reader-a.txt"), "alpha\n", "utf8");
     await writeFile(join(fixture, "reader-b.txt"), "beta\n", "utf8");
+    const beforeTree = await snapshotAcceptanceTree(fixture);
     await symlink(join(CODEX_HOME, "auth.json"), authLink);
     const luna = ROLE_SPECS.find((role) => role.name === "luna_clerk");
     const terra = ROLE_SPECS.find((role) => role.name === "terra_explorer");
     const startedAtMs = Date.now();
+    const parentMarker = "Q10_PARENT_OK";
+    const exactCalls = ACCEPTANCE_PARALLEL_CHILDREN.map((child) => JSON.stringify({
+      agent_type: child.role,
+      fork_turns: "none",
+      message: child.message,
+      task_name: child.taskName,
+    }));
     const prompt = [
       "This is an explicitly authorized acceptance fixture.",
       "Call spawn_agent exactly twice and no other delegation.",
-      "First call: agent_type=luna_clerk, task_name=acceptance_luna, fork_turns=none; message must restrict reading to reader-a.txt and prohibit writes/delegation.",
-      "Second call: agent_type=terra_explorer, task_name=acceptance_terra, fork_turns=none; message must restrict reading to reader-b.txt and prohibit writes/delegation.",
-      "Do not pass model, reasoning_effort, model_reasoning_effort, or service_tier. Wait for both children, then summarize. Do not edit files.",
+      `Use exactly these argument objects and no extra fields:\n${exactCalls.join("\n")}`,
+      `Do not pass model, reasoning_effort, model_reasoning_effort, or service_tier. Wait for both children. Do not edit files. After both exact child markers arrive, reply exactly ${parentMarker}.`,
     ].join("\n");
     const command = await runCommand(CODEX_BIN, [
       "--strict-config", "-c", "features.multi_agent_v2.enabled=true", "-c", "features.multi_agent_v2.max_concurrent_threads_per_session=2",
@@ -464,37 +545,54 @@ async function runAcceptanceParallel(scenario) {
     const parent = parents.length === 1 ? parents[0] : null;
     const children = spawnedChildren(parent, summaries);
     const spawnCalls = (parent?.functionCalls ?? []).filter((call) => call?.name?.endsWith("spawn_agent"));
-    const scopes = ["reader-a.txt", "reader-b.txt"];
-    const childFacts = children.map((child) => acceptanceChildFacts(
-      child,
-      (child?.sessionMeta?.agent_role ?? child?.sessionMeta?.source?.subagent?.thread_spawn?.agent_role) === "luna_clerk"
-        ? scopes[0]
-        : scopes[1],
-    ));
-    const expected = [luna, terra];
-    const validSpawns = spawnCalls.length === 2 && spawnCalls.every((call, index) => {
-      const validation = validateTypedSpawnArgs(call?.args ?? {});
-      return validation.pass && call.args.agent_type === expected[index].name &&
-        typeof call.args.message === "string" && call.args.message.includes(scopes[index]);
+    const validSpawns = spawnCalls.length === ACCEPTANCE_PARALLEL_CHILDREN.length &&
+      ACCEPTANCE_PARALLEL_CHILDREN.every((expected) =>
+        spawnCalls.filter((call) => exactParallelSpawn(call?.args, expected)).length === 1,
+      );
+    const childFacts = children.map((child) => {
+      const role = child?.sessionMeta?.agent_role ?? child?.sessionMeta?.source?.subagent?.thread_spawn?.agent_role;
+      const expected = ACCEPTANCE_PARALLEL_CHILDREN.find((entry) => entry.role === role);
+      const spawnCall = spawnCalls.find((call) => call?.args?.agent_type === role);
+      return expected
+        ? acceptanceChildFacts(child, expected, spawnCall?.args)
+        : { role, model: null, effort: null, depth: null, sandbox: null, writer: true, descendants: 0, readScope: null, markerReturned: false, runtimePersisted: false, tokenUsage: null };
     });
+    const parentId = parent?.sessionId ?? parent?.sessionMeta?.id ?? parent?.sessionMeta?.session_id;
+    const childIds = children.map((child) => child?.sessionId ?? child?.sessionMeta?.id ?? child?.sessionMeta?.session_id);
+    const lineageExact = parents.length === 1 && summaries.length === 3 && children.length === 2 &&
+      typeof parentId === "string" && new Set(childIds).size === 2 &&
+      childIds.every((id) => typeof id === "string" && id !== parentId) &&
+      children.every((child) => child?.sessionMeta?.source?.subagent?.thread_spawn?.parent_thread_id === parentId);
+    const afterTree = await snapshotAcceptanceTree(fixture);
+    const filesystemUnchanged = JSON.stringify(beforeTree) === JSON.stringify(afterTree);
+    const parentMarkerReturned = (parent?.finalTexts ?? []).some((text) => text.trim() === parentMarker);
     const topology = {
       parent: { model: parent?.turnContext?.model, effort: parent?.turnContext?.effort, runtimePersisted: Boolean(parent?.sessionMeta && parent?.turnContext), tokenUsage: parent?.tokenUsage ?? null },
       children: childFacts,
       writerCount: 0,
       descendantCount: childFacts.reduce((count, child) => count + child.descendants, 0),
+      spawnsExact: validSpawns,
+      lineageExact,
+      filesystemUnchanged,
+      parentMarkerReturned,
     };
-    const childRuntime = childFacts.length === 2 && expected.every((spec) =>
-      childFacts.some((child) => child.role === spec.name && child.depth === 1 && child.sandbox === "read-only" && child.runtimePersisted && Number.isFinite(child.tokenUsage?.total_tokens)),
+    topology.writerCount = childFacts.filter((child) => child.writer).length;
+    const childRuntime = childFacts.length === 2 && ACCEPTANCE_PARALLEL_CHILDREN.every((spec) =>
+      childFacts.some((child) => child.role === spec.role && child.model === spec.model && child.effort === spec.effort &&
+        child.depth === 1 && child.sandbox === "read-only" && child.runtimePersisted && child.markerReturned &&
+        Number.isFinite(child.tokenUsage?.total_tokens)),
     );
     answer = acceptanceResult(scenario, {
-      pass: command.code === 0 && !command.timedOut && validSpawns && childRuntime,
+      decision,
+      pass: command.code === 0 && !command.timedOut && validSpawns && childRuntime &&
+        lineageExact && filesystemUnchanged && parentMarkerReturned && topology.writerCount === 0 && topology.descendantCount === 0,
       runtime: acceptanceRuntime(parent),
       topology,
       cleanup: { pass: false },
       hardFailure: command.code === 0 && !command.timedOut ? null : "runtime",
     });
   } catch {
-    answer = acceptanceResult(scenario, { hardFailure: "runtime" });
+    answer = acceptanceResult(scenario, { decision, hardFailure: "runtime" });
   } finally {
     await unlink(authLink).catch(() => {});
     try { cleanup = (await cleanupProbeArtifacts([probeHome, fixture])).removed.length === 2; } catch { cleanup = false; }
@@ -1181,9 +1279,10 @@ async function runAcceptanceAll({ roleSmoke = null } = {}) {
     readGlobalConfig: () => readFile(join(CODEX_HOME, "config.toml"), "utf8"),
     executeRoot: runAcceptanceRoot,
     executeIsolated: runAcceptanceIsolated,
-    executeTyped: async (scenario) => {
+    executeTyped: async (scenario, { decision }) => {
       const worker = smoke.roles?.find((role) => role.role === "terra_worker");
       return acceptanceResult(scenario, {
+        decision,
         pass: worker?.pass === true,
         runtime: { persisted: worker?.checks?.parentPersisted === true && worker?.checks?.childPersisted === true, model: worker?.actual?.model, effort: worker?.actual?.effort, tokenUsage: worker?.actual?.tokenUsage ?? null },
         cleanup: { pass: worker?.cleanup?.pass === true },
@@ -1202,8 +1301,7 @@ async function runAcceptanceAll({ roleSmoke = null } = {}) {
   await mkdir(directory, { recursive: true });
   await writeJson(join(directory, "acceptance.json"), report);
   await atomicWrite(join(directory, "acceptance.md"), acceptanceMarkdown(report));
-  report.reportDirectory = directory;
-  return report;
+  return attachAcceptanceMetadata(report, { reportDirectory: directory });
 }
 
 async function postInstallRootSmoke({ requireUltra = false } = {}) {
@@ -1561,7 +1659,7 @@ async function cleanupSmokeProjects(manifestPath) {
   return manifest.postApplyCleanup;
 }
 
-async function dryRunApply({ dispatchMode = null } = {}) {
+export async function dryRunApply({ dispatchMode = null } = {}) {
   if (dispatchMode !== null && !["shadow", "active"].includes(dispatchMode)) {
     throw new Error("dispatch mode must be shadow or active");
   }
@@ -1750,7 +1848,9 @@ async function main() {
   process.exitCode = 2;
 }
 
-main().catch((error) => {
-  process.stderr.write(`GEARBOX_ERROR ${error.message}\n`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === SCRIPT_PATH) {
+  main().catch((error) => {
+    process.stderr.write(`GEARBOX_ERROR ${error.message}\n`);
+    process.exitCode = 1;
+  });
+}

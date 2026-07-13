@@ -163,18 +163,35 @@ async function activeManifestValid(policy) {
   try {
     const manifestPath = activation?.manifestPath;
     const metadata = await lstat(manifestPath);
-    if (!metadata.isFile() || metadata.isSymbolicLink()) return false;
+    if (!metadata.isFile() || metadata.isSymbolicLink() || (metadata.mode & 0o022) !== 0) return false;
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    const repositoryRoot = typeof manifest?.activation?.repositoryRoot === "string" ? resolve(manifest.activation.repositoryRoot) : null;
+    const repositoryRootInput = typeof manifest?.activation?.repositoryRoot === "string"
+      ? resolve(manifest.activation.repositoryRoot)
+      : null;
+    const repositoryRoot = repositoryRootInput ? await realpath(repositoryRootInput) : null;
     const reportsRoot = repositoryRoot ? await realpath(join(repositoryRoot, "reports")) : null;
     const actual = await realpath(manifestPath);
-    if (!repositoryRoot || !reportsRoot || !actual.startsWith(`${reportsRoot}${sep}`)) return false;
+    const fromReports = reportsRoot ? relative(reportsRoot, actual) : null;
+    const fromRepositoryInput = repositoryRootInput ? relative(repositoryRootInput, resolve(manifestPath)) : null;
+    const expectedActual = repositoryRoot && fromRepositoryInput !== null
+      ? resolve(repositoryRoot, fromRepositoryInput)
+      : null;
+    if (!repositoryRoot || !reportsRoot || reportsRoot !== join(repositoryRoot, "reports") || actual !== expectedActual ||
+      fromReports === null || fromReports === "" || fromReports === ".." || fromReports.startsWith(`..${sep}`)) return false;
     if (manifest.status !== "applied" || manifest.activation?.installId !== activation.installId || manifest.activation?.manifestPath !== manifestPath || manifest.activation?.policySha256 !== policy.sha256 || !/^[a-f0-9]{64}$/.test(manifest.activation?.acceptanceBindingSha256 ?? "")) return false;
+    if (manifest.staticChecks === null || typeof manifest.staticChecks !== "object" ||
+      !["strictConfig", "configLoad", "mcpConfig", "installation"].every((key) => manifest.staticChecks[key] === true)) return false;
+    if (manifest.postInstallRootSmoke?.pass !== true ||
+      manifest.postInstallRootSmoke?.actual?.persisted !== true ||
+      manifest.postInstallRootSmoke?.actual?.model !== "gpt-5.6-sol" ||
+      manifest.postInstallRootSmoke?.actual?.effort !== "ultra") return false;
     const policyPath = join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH);
     const policyMetadata = await lstat(policyPath);
-    if (!policyMetadata.isFile() || policyMetadata.isSymbolicLink()) return false;
+    if (!policyMetadata.isFile() || policyMetadata.isSymbolicLink() || (policyMetadata.mode & 0o777) !== 0o600) return false;
     const source = await readFile(policyPath, "utf8");
-    const file = manifest.files?.find((entry) => entry.kind === "dispatch-policy" && entry.targetPath === policyPath);
+    const files = manifest.files?.filter((entry) => entry.kind === "dispatch-policy" && entry.targetPath === policyPath) ?? [];
+    if (files.length !== 1) return false;
+    const [file] = files;
     return file?.mode === 0o600 && file?.afterSha256 === sha256(source) && file?.targetSha256 === sha256(source);
   } catch {
     return false;

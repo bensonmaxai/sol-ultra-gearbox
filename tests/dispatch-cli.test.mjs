@@ -94,6 +94,8 @@ async function fixture(t, { policy = true, policyMode = "shadow" } = {}) {
       await writeFile(manifestPath, `${JSON.stringify({
         status: "applied",
         activation: { installId: "fixture", manifestPath, repositoryRoot: home, policySha256: JSON.parse(source).sha256, acceptanceBindingSha256: "a".repeat(64) },
+        staticChecks: { strictConfig: true, configLoad: true, mcpConfig: true, installation: true },
+        postInstallRootSmoke: { pass: true, actual: { persisted: true, model: "gpt-5.6-sol", effort: "ultra" } },
         files: [{ kind: "dispatch-policy", targetPath: policyPath, mode: 0o600, afterSha256: digest, targetSha256: digest }],
       })}\n`, { mode: 0o600 });
     }
@@ -210,9 +212,27 @@ test("active policy requires its applied manifest before planning", async (t) =>
   const valid = await run(["status"], { CODEX_HOME: home });
   assert.equal(jsonOnly(valid).mode, "active");
   const policy = JSON.parse(await readFile(join(home, "gearbox", "dispatch-policy.json"), "utf8"));
-  await writeFile(policy.activation.manifestPath, `${JSON.stringify({ status: "applying" })}\n`);
-  const blocked = await run(["plan", "--packet", path], { CODEX_HOME: home });
-  assert.deepEqual(jsonOnly(blocked), { status: "GEARBOX_DISPATCH_OFF", mode: "off" });
+  const manifestSource = await readFile(policy.activation.manifestPath, "utf8");
+  const manifest = JSON.parse(manifestSource);
+  for (const mutate of [
+    (value) => { value.status = "applying"; },
+    (value) => { value.activation.acceptanceBindingSha256 = "invalid"; },
+    (value) => { value.files[0].mode = 0o644; },
+    (value) => { value.files.push({ ...value.files[0] }); },
+    (value) => { value.staticChecks.configLoad = false; },
+    (value) => { value.postInstallRootSmoke.actual.effort = "max"; },
+  ]) {
+    const drift = structuredClone(manifest);
+    mutate(drift);
+    await writeFile(policy.activation.manifestPath, `${JSON.stringify(drift)}\n`, { mode: 0o600 });
+    const blocked = await run(["plan", "--packet", path], { CODEX_HOME: home });
+    assert.deepEqual(jsonOnly(blocked), { status: "GEARBOX_DISPATCH_OFF", mode: "off" });
+    assert.doesNotMatch(blocked.stdout, /manifest|acceptanceBinding|policySha256/);
+  }
+  await writeFile(policy.activation.manifestPath, manifestSource, { mode: 0o600 });
+  await chmod(join(home, "gearbox", "dispatch-policy.json"), 0o644);
+  const wrongMode = await run(["status"], { CODEX_HOME: home });
+  assert.deepEqual(jsonOnly(wrongMode), { status: "GEARBOX_DISPATCH_OFF", mode: "off" });
 });
 
 test("active isolated execution materializes only allowed read scope and never releases failed deliverables", async (t) => {
