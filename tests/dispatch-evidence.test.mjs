@@ -72,6 +72,40 @@ function resultFixture(overrides = {}) {
   };
 }
 
+function typedFixtures(role = roleSpec) {
+  return {
+    parent: {
+      sessionMeta: { id: "parent-session" },
+      turnContext: {},
+      functionCalls: [
+        {
+          name: "spawn_agent",
+          args: {
+            agent_type: role.name,
+            task_name: "bounded",
+            fork_turns: "none",
+            message: "bounded task",
+          },
+        },
+      ],
+      tokenUsage: { total_tokens: 100 },
+    },
+    child: {
+      sessionMeta: {
+        agent_role: role.name,
+        source: { subagent: { thread_spawn: { depth: 1, parent_thread_id: "parent-session" } } },
+      },
+      turnContext: {
+        model: role.model,
+        effort: role.effort,
+        sandbox_policy: { type: role.sandbox },
+      },
+      functionCalls: [],
+      tokenUsage: { total_tokens: 50 },
+    },
+  };
+}
+
 test("validateDispatchResult accepts only the exact complete envelope", () => {
   assert.equal(
     validateDispatchResult({
@@ -102,6 +136,7 @@ test("validateDispatchResult rejects missing and drifting evidence", () => {
     ["read-only write", { checks: { ...requiredChecks, filesystemScope: false } }],
     ["timeout", { checks: { ...requiredChecks, commandDidNotTimeout: false } }],
     ["cleanup failure", { checks: { ...requiredChecks, cleanupPassed: false } }],
+    ["forged negative parent tokens", { actual: { ...resultFixture().actual, parentTokens: -1 } }],
     ["extra field", { extra: true }],
   ];
   for (const [name, overrides] of cases) {
@@ -112,6 +147,24 @@ test("validateDispatchResult rejects missing and drifting evidence", () => {
     });
     assert.equal(result.pass, false, name);
   }
+});
+
+test("validateDispatchResult rejects forged typed-child token totals", () => {
+  const typedDecision = { ...decision, selectedShape: "typed_child" };
+  const typedResult = resultFixture({
+    executionShape: "typed_child",
+    expected: { ...resultFixture().expected, depth: 1 },
+    actual: {
+      ...resultFixture().actual,
+      depth: 1,
+      childTokens: -1,
+      nativeAgentRole: roleSpec.name,
+    },
+  });
+  assert.equal(
+    validateDispatchResult({ result: typedResult, decision: typedDecision, roleSpec }).pass,
+    false,
+  );
 });
 
 test("verifyIsolatedRoot enforces a zero-spawn isolated root", () => {
@@ -167,6 +220,18 @@ test("verifyIsolatedRoot enforces a zero-spawn isolated root", () => {
   assert.equal(subagent.pass, false);
   assert.equal(subagent.checks.runtimePersisted, false);
 
+  const missingSource = verifyIsolatedRoot({
+    summary: { ...summary, threadSource: null },
+    decision,
+    roleSpec,
+    roleHash,
+    before: { changedFiles: [] },
+    after: { changedFiles: [] },
+    cleanup: { passed: true, commandExitedZero: true, timedOut: false },
+  });
+  assert.equal(missingSource.pass, false);
+  assert.equal(missingSource.checks.runtimePersisted, false);
+
   const wrongShape = verifyIsolatedRoot({
     summary,
     decision: { ...decision, selectedShape: "root_inline" },
@@ -184,32 +249,7 @@ test("verifyTypedChildResult requires exact typed single-parent lineage", () => 
     ...decision,
     selectedShape: "typed_child",
   };
-  const parent = {
-    sessionMeta: {},
-    turnContext: {},
-    functionCalls: [
-      {
-        name: "spawn_agent",
-        args: {
-          agent_type: roleSpec.name,
-          task_name: "bounded",
-          fork_turns: "none",
-          message: "bounded task",
-        },
-      },
-    ],
-    tokenUsage: { total_tokens: 100 },
-  };
-  const child = {
-    sessionMeta: { agent_role: roleSpec.name, source: { subagent: { thread_spawn: { depth: 1 } } } },
-    turnContext: {
-      model: roleSpec.model,
-      effort: roleSpec.effort,
-      sandbox_policy: { type: roleSpec.sandbox },
-    },
-    functionCalls: [],
-    tokenUsage: { total_tokens: 50 },
-  };
+  const { parent, child } = typedFixtures();
   const result = verifyTypedChildResult({
     parent,
     child,
@@ -250,6 +290,95 @@ test("verifyTypedChildResult requires exact typed single-parent lineage", () => 
   assert.equal(wrongShape.pass, false);
 });
 
+test("verifyTypedChildResult rejects mismatched or missing parent lineage", () => {
+  const typedDecision = { ...decision, selectedShape: "typed_child" };
+  const { parent, child } = typedFixtures();
+  for (const childVariant of [
+    {
+      ...child,
+      sessionMeta: {
+        ...child.sessionMeta,
+        source: { subagent: { thread_spawn: { depth: 1, parent_thread_id: "other-session" } } },
+      },
+    },
+    {
+      ...child,
+      sessionMeta: {
+        ...child.sessionMeta,
+        source: { subagent: { thread_spawn: { depth: 1 } } },
+      },
+    },
+  ]) {
+    const result = verifyTypedChildResult({
+      parent,
+      child: childVariant,
+      decision: typedDecision,
+      roleSpec,
+      roleHash,
+      before: { changedFiles: [] },
+      after: { changedFiles: [] },
+      cleanup: { passed: true, commandExitedZero: true, timedOut: false },
+    });
+    assert.equal(result.pass, false);
+  }
+});
+
+test("verifyTypedChildResult enforces read-only and writer file scopes", () => {
+  const typedDecision = { ...decision, selectedShape: "typed_child" };
+  const readOnly = typedFixtures();
+  const readOnlyWrite = verifyTypedChildResult({
+    ...readOnly,
+    decision: typedDecision,
+    roleSpec,
+    roleHash,
+    before: { changedFiles: [] },
+    after: { changedFiles: ["write.txt"] },
+    cleanup: { passed: true, commandExitedZero: true, timedOut: false },
+  });
+  assert.equal(readOnlyWrite.pass, false);
+  assert.equal(readOnlyWrite.checks.filesystemScope, false);
+
+  const writer = {
+    ...roleSpec,
+    name: "terra_worker",
+    effort: "high",
+    sandbox: "workspace-write",
+  };
+  const writerDecision = { ...typedDecision, role: writer.name };
+  const writerRun = typedFixtures(writer);
+  const base = {
+    ...writerRun,
+    decision: writerDecision,
+    roleSpec: writer,
+    roleHash,
+    before: { changedFiles: [] },
+    cleanup: { passed: true, commandExitedZero: true, timedOut: false },
+  };
+  assert.equal(
+    verifyTypedChildResult({ ...base, after: { changedFiles: ["src/a.mjs"] } }).pass,
+    false,
+    "writer scope is required",
+  );
+  assert.equal(
+    verifyTypedChildResult({
+      ...base,
+      allowedWriteScope: ["src"],
+      after: { changedFiles: ["test/a.mjs"] },
+    }).pass,
+    false,
+    "writer out-of-scope file is rejected",
+  );
+  assert.equal(
+    verifyTypedChildResult({
+      ...base,
+      allowedWriteScope: ["src"],
+      after: { changedFiles: ["src/a.mjs"] },
+    }).pass,
+    true,
+    "writer in-scope file is accepted",
+  );
+});
+
 test("classifyDispatchFailure allows only the first deliverable correction", () => {
   assert.deepEqual(
     classifyDispatchFailure(resultFixture({ checks: { ...requiredChecks, filesystemScope: false } })),
@@ -271,4 +400,28 @@ test("classifyDispatchFailure allows only the first deliverable correction", () 
     classifyDispatchFailure(resultFixture()),
     { retryAllowed: false, fallbackReason: null, rollbackRequired: false },
   );
+});
+
+test("deliverable-only rejection does not require rollback", () => {
+  const result = verifyIsolatedRoot({
+    summary: {
+      sessionMeta: { agent_role: null },
+      threadSource: "root",
+      turnContext: {
+        model: roleSpec.model,
+        effort: roleSpec.effort,
+        sandbox_policy: { type: roleSpec.sandbox },
+      },
+      functionCalls: [],
+      tokenUsage: { total_tokens: 1 },
+    },
+    decision: { ...decision, selectedShape: "root_inline" },
+    roleSpec,
+    roleHash,
+    before: { changedFiles: [] },
+    after: { changedFiles: [] },
+    cleanup: { passed: true, commandExitedZero: true, timedOut: false },
+  });
+  assert.equal(result.checks.deliverableValid, false);
+  assert.equal(result.rollbackRequired, false);
 });
