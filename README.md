@@ -12,6 +12,21 @@ rolling back the corresponding local configuration.
 persisted rollout metadata 驗證實際 model、effort、sandbox、depth 與 token
 usage。任何 metadata 缺失、越界寫入或 schema mismatch 都會 fail closed。
 
+## Root modes
+
+| Mode | Intended use |
+|---|---|
+| Sol root, lightest sufficient effort | Default single-agent execution |
+| Sol Max root | Ambiguous, tightly sequential, high-risk, or difficult-to-verify work |
+| Sol Ultra root | Orchestration with at least two independent workstreams |
+
+Sol Max is selected on the root task. It is not a custom child role and the
+Gearbox does not spawn a Sol child to simulate it.
+
+See the [complete work and model routing matrix](skills/sol-ultra-gearbox/references/routing-matrix.md)
+for Low through Ultra effort boundaries, escalation, and the distinction
+between Sol Ultra root orchestration and the Terra Ultra child profile.
+
 ## Roles
 
 | Role | Model | Effort | Permission | Intended use |
@@ -21,8 +36,10 @@ usage。任何 metadata 缺失、越界寫入或 schema mismatch 都會 fail clo
 | `terra_worker` | `gpt-5.6-terra` | `high` | workspace-write | Planned implementation with an exclusive scope |
 | `sol_reviewer` | `gpt-5.6-sol` | `high` | read-only | Requirements, diff, security boundary, and test review |
 | `terra_ultra_specialist` | `gpt-5.6-terra` | `ultra` | workspace-write | Exceptional module-scale, rollback-safe work |
+| `terra_max_worker` | `gpt-5.6-terra` | `max` | workspace-write | Explicitly requested or existing Max-profile workflows |
 
-`terra_max_worker` remains available only for legacy compatibility.
+`terra_max_worker` is a supported opt-in compatibility role, but it is never an
+automatic route or the default upgrade from `terra_worker`.
 
 ## Safety model
 
@@ -37,6 +54,8 @@ usage。任何 metadata 缺失、越界寫入或 schema mismatch 都會 fail clo
   about its identity.
 - Use an isolated `CODEX_HOME` for live probes and require the real global
   config to have the same contents before and after the probe.
+- Remove owned temporary probe homes and fixtures after evidence extraction;
+  treat cleanup failure as a smoke failure.
 - Stop after the first failed role. Do not retry a cost-bearing smoke test.
 - Back up and marker-manage every global write so rollback does not replace an
   unrelated complete config file.
@@ -102,10 +121,11 @@ The following command launches real model-backed probes and consumes credits:
 npm run smoke
 ```
 
-Run it only with explicit owner approval. A pass requires all five roles to
+Run it only with explicit owner approval. A pass requires all six roles to
 match their expected role, model, effort, sandbox, depth, parent and child token
-metadata, marker, filesystem scope, and no-descendant policy. Raw reports are
-written under `reports/` and intentionally ignored by Git.
+metadata, marker, filesystem scope, no-descendant policy, and temporary-artifact
+cleanup. Raw reports are written under `reports/` and intentionally ignored by
+Git.
 
 ## Promote and rollback global configuration
 

@@ -57,7 +57,7 @@ case "$ROLE" in
     ;;
   terra_max_worker)
     ROLE_FILE="$CODEX_HOME_DIR/agents/terra-max-worker.toml"
-    ROLE_DESCRIPTION="Legacy Terra Max compatibility worker. Use only when explicitly requested; terra_worker is the normal implementation route."
+    ROLE_DESCRIPTION="Opt-in Terra Max compatibility worker. Use only when the owner explicitly requests this exact role or an existing workflow requires it; terra_worker is the normal implementation route."
     SANDBOX="workspace-write"
     ;;
   *)

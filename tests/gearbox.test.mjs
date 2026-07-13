@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,7 @@ import {
   CONFIG_ROLES_MARKER,
   CONFIG_V2_MARKER,
   ROLE_SPECS,
+  cleanupProbeArtifacts,
   redactSensitive,
   removeOwnedSmokeProjectEntries,
   renderAgentsMd,
@@ -137,6 +139,8 @@ test("renderAgentsMd replaces the workflow section and preserves neighbors", () 
   const output = renderAgentsMd(input);
   assert.match(output, new RegExp(AGENTS_MARKER));
   assert.match(output, /luna_clerk/);
+  assert.match(output, /Sol Max/);
+  assert.match(output, /terra_max_worker/);
   assert.match(output, /## Later Section\n\nKeep me\./);
   assert.doesNotMatch(output, /old rule|old trigger/);
   assert.equal(renderAgentsMd(output), output);
@@ -148,6 +152,20 @@ test("all checked-in role files match their role specs", async () => {
     const result = validateRoleText(spec, source);
     assert.equal(result.pass, true, `${spec.name}: ${JSON.stringify(result.checks)}`);
   }
+});
+
+test("all six published roles participate in live smoke", () => {
+  assert.deepEqual(
+    ROLE_SPECS.filter((role) => role.smoke).map((role) => role.name),
+    [
+      "luna_clerk",
+      "terra_explorer",
+      "terra_worker",
+      "sol_reviewer",
+      "terra_ultra_specialist",
+      "terra_max_worker",
+    ],
+  );
 });
 
 test("redactSensitive removes sensitive payloads but retains usage counts", () => {
@@ -167,10 +185,34 @@ test("redactSensitive removes sensitive payloads but retains usage counts", () =
   assert.doesNotMatch(JSON.stringify(output), /SECRET_/);
 });
 
+test("cleanupProbeArtifacts removes only owned temporary directories", async (t) => {
+  const owned = await Promise.all([
+    mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-luna_clerk-")),
+    mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-terra_max_worker-")),
+  ]);
+  const unrelated = await mkdtemp(join(tmpdir(), "unrelated-probe-"));
+  t.after(() => rm(unrelated, { recursive: true, force: true }));
+  await Promise.all(
+    owned.map((path) =>
+      writeFile(join(path, "evidence.txt"), "temporary\n", "utf8"),
+    ),
+  );
+
+  const result = await cleanupProbeArtifacts(owned);
+  assert.equal(result.removed.length, 2);
+  for (const path of owned) await assert.rejects(stat(path), /ENOENT/);
+  await assert.rejects(
+    cleanupProbeArtifacts([unrelated]),
+    /Refusing to remove non-Gearbox probe path/,
+  );
+  assert.equal((await stat(unrelated)).isDirectory(), true);
+});
+
 test("verifyProbe requires typed lineage, exact runtime settings, and no descendants", () => {
   const spec = ROLE_SPECS.find((role) => role.name === "terra_worker");
   const parent = {
     sessionMeta: { id: "parent" },
+    turnContext: { model: "gpt-5.6-sol", effort: "max" },
     tokenUsage: { total_tokens: 200 },
     functionCalls: [
       {
@@ -211,15 +253,32 @@ test("verifyProbe requires typed lineage, exact runtime settings, and no descend
     parent,
     child,
     marker: "ROLE_PROBE_OK:terra_worker",
+    parentExpected: { model: "gpt-5.6-sol", effort: "max" },
   });
   assert.equal(result.pass, true);
+  assert.equal(result.checks.parentModelMatches, true);
+  assert.equal(result.checks.parentEffortMatches, true);
   assert.equal(result.checks.parentTokenUsagePersisted, true);
+
+  const wrongParentEffort = verifyProbe({
+    spec,
+    parent: {
+      ...parent,
+      turnContext: { ...parent.turnContext, effort: "high" },
+    },
+    child,
+    marker: "ROLE_PROBE_OK:terra_worker",
+    parentExpected: { model: "gpt-5.6-sol", effort: "max" },
+  });
+  assert.equal(wrongParentEffort.pass, false);
+  assert.equal(wrongParentEffort.checks.parentEffortMatches, false);
 
   const missingParentUsage = verifyProbe({
     spec,
     parent: { ...parent, tokenUsage: null },
     child,
     marker: "ROLE_PROBE_OK:terra_worker",
+    parentExpected: { model: "gpt-5.6-sol", effort: "max" },
   });
   assert.equal(missingParentUsage.pass, false);
   assert.equal(missingParentUsage.checks.parentTokenUsagePersisted, false);
@@ -234,6 +293,7 @@ test("verifyProbe requires typed lineage, exact runtime settings, and no descend
     },
     child,
     marker: "ROLE_PROBE_OK:terra_worker",
+    parentExpected: { model: "gpt-5.6-sol", effort: "max" },
   });
   assert.equal(untyped.pass, false);
   assert.equal(untyped.checks.typedRoleRequested, false);
