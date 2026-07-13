@@ -221,6 +221,20 @@ test("all six published roles participate in live smoke", () => {
   );
 });
 
+test("managed dispatch runtime is bound into the installer and packaged with the exact wrapper", async () => {
+  const installer = await readFile(join(REPO_ROOT, "scripts", "gearbox.mjs"), "utf8");
+  const wrapper = await readFile(join(REPO_ROOT, "scripts", "gearbox-dispatch"), "utf8");
+  const wrapperMode = (await stat(join(REPO_ROOT, "scripts", "gearbox-dispatch"))).mode & 0o777;
+  assert.match(installer, /DISPATCH_RUNTIME_FILES/);
+  assert.match(installer, /scripts\/gearbox-dispatch/);
+  assert.match(installer, /dispatchMode/);
+  assert.equal(wrapperMode, 0o755);
+  assert.equal(
+    wrapper,
+    "#!/usr/bin/env bash\nset -euo pipefail\nCODEX_HOME_DIR=\"${CODEX_HOME:-${HOME}/.codex}\"\nexec node \"$CODEX_HOME_DIR/gearbox/runtime/scripts/gearbox-dispatch.mjs\" \"$@\"\n",
+  );
+});
+
 test("redactSensitive removes sensitive payloads but retains usage counts", () => {
   const output = redactSensitive({
     token: "SECRET_TOKEN",

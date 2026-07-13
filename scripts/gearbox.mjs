@@ -23,6 +23,7 @@ import {
   CONFIG_LEGACY_THREADS_MARKER,
   CONFIG_ROLES_MARKER,
   CONFIG_V2_MARKER,
+  DISPATCH_RUNTIME_FILES,
   ROLE_SPECS,
   atomicWrite,
   backupFile,
@@ -42,6 +43,12 @@ import {
   writeJson,
 } from "../lib/gearbox.mjs";
 import {
+  assertManagedPolicyTarget,
+  createDispatchPolicy,
+  DISPATCH_POLICY_RELATIVE_PATH,
+  serializeDispatchPolicy,
+} from "../lib/dispatch-policy.mjs";
+import {
   createRuntimeBinding,
   validateSddAdapterEvidence,
   validateTrustedSmoke,
@@ -59,6 +66,8 @@ const RUNTIME_BINDING_PATHS = Object.freeze([
   "lib/runtime-evidence.mjs",
   "scripts/gearbox.mjs",
   "scripts/codex-typed-agent",
+  ...DISPATCH_RUNTIME_FILES,
+  "scripts/gearbox-dispatch",
 ]);
 
 function timestamp() {
@@ -934,6 +943,13 @@ async function rollbackFromManifest(manifestPath, { force = false, reason = null
   if (!force && manifest.agents.afterSha256 && sha256(currentAgents) !== manifest.agents.afterSha256) {
     throw new Error("AGENTS.md changed after installation; refusing rollback without --force");
   }
+  for (const entry of manifest.files) {
+    if (force || !entry.afterSha256) continue;
+    const current = await readOptional(entry.targetPath);
+    if (current === null || sha256(current) !== entry.afterSha256) {
+      throw new Error(`managed file changed after installation: ${entry.targetPath}`);
+    }
+  }
 
   await atomicWrite(
     configPath,
@@ -945,7 +961,17 @@ async function rollbackFromManifest(manifestPath, { force = false, reason = null
     await restoreBackup(manifest.agents.backup, manifest.timestamp),
   );
   for (const entry of manifest.files) {
-    actions.push(await restoreBackup(entry.backup, manifest.timestamp));
+    if (entry.removeOnRollback && !entry.backup.existed) {
+      try {
+        await unlink(entry.targetPath);
+        actions.push({ path: entry.targetPath, action: "removed" });
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+        actions.push({ path: entry.targetPath, action: "already_absent" });
+      }
+    } else {
+      actions.push(await restoreBackup(entry.backup, manifest.timestamp));
+    }
   }
   manifest.status = reason ? "failed_rolled_back" : "rolled_back";
   manifest.rollback = {
@@ -957,7 +983,60 @@ async function rollbackFromManifest(manifestPath, { force = false, reason = null
   return manifest;
 }
 
-async function installAfterSmoke(smoke) {
+async function readManagedPolicyTarget(path) {
+  let metadata;
+  try {
+    metadata = await lstat(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new Error("unmanaged dispatch policy target must be a regular file");
+  }
+  const source = await readFile(path, "utf8");
+  return assertManagedPolicyTarget(source);
+}
+
+function dispatchInstallEntries() {
+  return [
+    {
+      kind: "dispatch-policy",
+      sourcePath: null,
+      targetPath: join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH),
+      mode: 0o600,
+      removeOnRollback: true,
+    },
+    ...DISPATCH_RUNTIME_FILES.map((path) => ({
+      kind: "dispatch-runtime",
+      sourcePath: join(REPO_ROOT, path),
+      targetPath: join(CODEX_HOME, "gearbox", "runtime", path),
+      mode: 0o644,
+      removeOnRollback: true,
+    })),
+    {
+      kind: "dispatch-wrapper",
+      sourcePath: join(REPO_ROOT, "scripts", "gearbox-dispatch"),
+      targetPath: join(CODEX_HOME, "bin", "gearbox-dispatch"),
+      mode: 0o755,
+      removeOnRollback: true,
+    },
+  ];
+}
+
+async function installAfterSmoke(smoke, { dispatchMode = null } = {}) {
+  if (dispatchMode === "active") {
+    throw new Error("active dispatch requires trusted acceptance evidence");
+  }
+  if (dispatchMode !== null && dispatchMode !== "shadow") {
+    throw new Error("dispatch mode must be shadow");
+  }
+  const policy = dispatchMode === null
+    ? null
+    : createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null });
+  const policySource = policy === null ? null : serializeDispatchPolicy(policy);
+  const policyTarget = join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH);
+  if (policySource !== null) await readManagedPolicyTarget(policyTarget);
   const runTimestamp = timestamp();
   const reportDirectory = join(REPO_ROOT, "reports", `${runTimestamp}-apply`);
   const backupDirectory = join(
@@ -1001,8 +1080,27 @@ async function installAfterSmoke(smoke) {
     sourcePath: join(REPO_ROOT, "scripts", "codex-typed-agent"),
     targetPath: launcherPath,
     afterSha256: sha256(launcherSource),
+    sourceSha256: sha256(launcherSource),
+    targetSha256: sha256(launcherSource),
+    mode: 0o755,
     backup: launcherBackup,
   });
+  if (policySource !== null) {
+    for (const entry of dispatchInstallEntries()) {
+      const source = entry.kind === "dispatch-policy"
+        ? policySource
+        : await readFile(entry.sourcePath, "utf8");
+      const backup = await backupFile(entry.targetPath, backupDirectory);
+      fileEntries.push({
+        ...entry,
+        afterSha256: sha256(source),
+        sourceSha256: sha256(source),
+        targetSha256: sha256(source),
+        policyMode: entry.kind === "dispatch-policy" ? policy.mode : null,
+        backup,
+      });
+    }
+  }
 
   const manifestPath = join(reportDirectory, "install-manifest.json");
   const manifest = {
@@ -1037,11 +1135,13 @@ async function installAfterSmoke(smoke) {
 
   try {
     for (const entry of fileEntries) {
-      const source = await readFile(entry.sourcePath, "utf8");
+      const source = entry.kind === "dispatch-policy"
+        ? policySource
+        : await readFile(entry.sourcePath, "utf8");
       await atomicWrite(
         entry.targetPath,
         source,
-        entry.kind === "launcher" ? 0o755 : 0o644,
+        entry.mode ?? (entry.kind === "launcher" ? 0o755 : 0o644),
       );
     }
     await atomicWrite(agentsPath, agentsTarget, agentsMode);
@@ -1132,7 +1232,13 @@ async function cleanupSmokeProjects(manifestPath) {
   return manifest.postApplyCleanup;
 }
 
-async function dryRunApply() {
+async function dryRunApply({ dispatchMode = null } = {}) {
+  if (dispatchMode === "active") {
+    throw new Error("active dispatch requires trusted acceptance evidence");
+  }
+  if (dispatchMode !== null && dispatchMode !== "shadow") {
+    throw new Error("dispatch mode must be shadow");
+  }
   const doctor = await runDoctor();
   const configPath = join(CODEX_HOME, "config.toml");
   const agentsPath = join(CODEX_HOME, "AGENTS.md");
@@ -1140,6 +1246,23 @@ async function dryRunApply() {
   const agentsSource = await readFile(agentsPath, "utf8");
   const configTarget = renderConfig(configSource, CODEX_HOME, { promoteV2: true });
   const agentsTarget = renderAgentsMd(agentsSource);
+  const dispatch = dispatchMode === null ? null : (() => {
+    const policy = createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null });
+    const policySource = serializeDispatchPolicy(policy);
+    return {
+      mode: policy.mode,
+      policySha256: sha256(policySource),
+      runtime: DISPATCH_RUNTIME_FILES.map((path) => ({ path, sha256: null })),
+      wrapper: { path: "scripts/gearbox-dispatch", sha256: null },
+    };
+  })();
+  if (dispatch !== null) {
+    await readManagedPolicyTarget(join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH));
+    for (const entry of dispatch.runtime) {
+      entry.sha256 = sha256(await readFile(join(REPO_ROOT, entry.path), "utf8"));
+    }
+    dispatch.wrapper.sha256 = sha256(await readFile(join(REPO_ROOT, dispatch.wrapper.path), "utf8"));
+  }
   return {
     pass: doctor.pass,
     doctor,
@@ -1155,6 +1278,7 @@ async function dryRunApply() {
         changed: agentsSource !== agentsTarget,
       },
       installedRoleCount: ROLE_SPECS.length,
+      dispatch,
       secretsCopiedToReport: false,
     },
   };
@@ -1171,7 +1295,7 @@ function usage() {
   node scripts/gearbox.mjs doctor [--json]
   node scripts/gearbox.mjs smoke --all
   node scripts/gearbox.mjs smoke-sdd
-  node scripts/gearbox.mjs apply --promote-v2 [--dry-run] [--reuse-smoke <reports/.../smoke.json>]
+  node scripts/gearbox.mjs apply --promote-v2 [--dry-run] [--dispatch-mode shadow] [--reuse-smoke <reports/.../smoke.json>]
   node scripts/gearbox.mjs cleanup-smoke-projects --manifest <path>
   node scripts/gearbox.mjs rollback --manifest <path> [--force]
 `);
@@ -1220,8 +1344,12 @@ async function main() {
     if (!args.includes("--promote-v2")) {
       throw new Error("apply requires --promote-v2");
     }
+    const dispatchMode = optionValue(args, "--dispatch-mode");
+    if (args.includes("--dispatch-mode") && !dispatchMode) {
+      throw new Error("--dispatch-mode requires a mode");
+    }
     if (args.includes("--dry-run")) {
-      const report = await dryRunApply();
+      const report = await dryRunApply({ dispatchMode });
       process.stdout.write(`${JSON.stringify(redactSensitive(report), null, 2)}\n`);
       if (!report.pass) process.exitCode = 1;
       return;
@@ -1240,7 +1368,7 @@ async function main() {
         `${smoke.expectedRoleCount}-role smoke failed; global config was not changed. Report: ${smoke.reportDirectory}`,
       );
     }
-    const result = await installAfterSmoke(smoke);
+    const result = await installAfterSmoke(smoke, { dispatchMode });
     process.stdout.write("GEARBOX_APPLY_PASS\n");
     process.stdout.write(`MANIFEST ${result.manifestPath}\n`);
     return;
