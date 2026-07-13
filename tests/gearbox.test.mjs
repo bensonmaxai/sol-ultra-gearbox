@@ -279,9 +279,14 @@ test("cleanupProbeArtifacts removes only owned temporary directories", async (t)
     mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-luna_clerk-")),
     mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-terra_max_worker-")),
     mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-sdd-")),
+    mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-luna_clerk-")),
+    mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-home-terra_explorer-")),
   ]);
-  const unrelated = await mkdtemp(join(tmpdir(), "unrelated-probe-"));
-  t.after(() => rm(unrelated, { recursive: true, force: true }));
+  const unrelated = await Promise.all([
+    mkdtemp(join(tmpdir(), "unrelated-probe-")),
+    mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-terra_worker-")),
+  ]);
+  t.after(() => Promise.all(unrelated.map((path) => rm(path, { recursive: true, force: true }))));
   await Promise.all(
     owned.map((path) =>
       writeFile(join(path, "evidence.txt"), "temporary\n", "utf8"),
@@ -289,13 +294,18 @@ test("cleanupProbeArtifacts removes only owned temporary directories", async (t)
   );
 
   const result = await cleanupProbeArtifacts(owned);
-  assert.equal(result.removed.length, 3);
+  assert.equal(result.removed.length, 5);
   for (const path of owned) await assert.rejects(stat(path), /ENOENT/);
   await assert.rejects(
-    cleanupProbeArtifacts([unrelated]),
+    cleanupProbeArtifacts([unrelated[0]]),
     /Refusing to remove non-Gearbox probe path/,
   );
-  assert.equal((await stat(unrelated)).isDirectory(), true);
+  await assert.rejects(
+    cleanupProbeArtifacts([unrelated[1]]),
+    /Refusing to remove non-Gearbox probe path/,
+  );
+  assert.equal((await stat(unrelated[0])).isDirectory(), true);
+  assert.equal((await stat(unrelated[1])).isDirectory(), true);
 });
 
 test("verifyProbe requires typed lineage, exact runtime settings, and no descendants", () => {
