@@ -9,8 +9,8 @@ await mkdir(renders, { recursive: true });
 
 const variants = {
   still: ["still", "src/index.ts", "GearboxLaunchVertical", resolve(renders, "cover.png"), "--frame=120", "--image-format=png", "--scale=0.5"],
-  bilingual: ["render", "src/index.ts", "GearboxLaunchVertical", resolve(renders, "gearbox-launch-bilingual.mp4"), "--codec=h264", "--pixel-format=yuv420p"],
-  clean: ["render", "src/index.ts", "GearboxLaunchVertical", resolve(renders, "gearbox-launch-clean.mp4"), "--codec=h264", "--pixel-format=yuv420p", "--props={\"showCaptions\":false}"],
+  bilingual: ["render", "src/index.ts", "GearboxLaunchVertical", resolve(renders, "gearbox-launch-bilingual.mp4"), "--codec=h264", "--pixel-format=yuv420p", "--color-space=bt709", "--image-format=png"],
+  clean: ["render", "src/index.ts", "GearboxLaunchVertical", resolve(renders, "gearbox-launch-clean.mp4"), "--codec=h264", "--pixel-format=yuv420p", "--color-space=bt709", "--image-format=png", "--props={\"showCaptions\":false}"],
 };
 
 if (!(mode in variants)) {

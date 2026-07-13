@@ -11,6 +11,7 @@
     "render:still": "node scripts/render.mjs still",
     "render:bilingual": "node scripts/render.mjs bilingual",
     "render:clean": "node scripts/render.mjs clean",
+    "record:doctor": "cd ../.. && vhs media/launch-video/tapes/doctor-dry-run.tape",
     "copy:social": "node scripts/copy-social.mjs",
     "xai:dry-run": "bash scripts/xai-dry-run.sh"
   },

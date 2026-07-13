@@ -34,6 +34,9 @@ test("registers the locked 45-second vertical composition", async () => {
   assert.match(root, /fps=\{30\}/);
   assert.match(root, /width=\{1080\}/);
   assert.match(root, /height=\{1920\}/);
+  assert.match(root, /import \{ launchVideoConfig \} from "\.\/data\/config"/);
+  assert.match(root, /defaultProps=\{launchVideoConfig\}/);
+  assert.doesNotMatch(root, /doctor:\s*\{/);
 });
 
 test("caption pairs are chronological, readable, and exactly fill the runtime", async () => {
@@ -103,10 +106,24 @@ test("optional media uses approved PNGs without requesting missing videos and ke
   }
   assert.match(media, /<Img src=\{staticFile\(media\.generatedBackground\)\}/);
   assert.match(media, /media\.videoEnabled && media\.xaiClip/);
-  assert.match(config, /doctor: \{ enabled: false, recordingPath: "generated\/doctor-dry-run\.mp4", playbackRate: 3 \}/);
+  assert.match(config, /doctor: \{ enabled: true, recordingPath: "generated\/doctor-dry-run\.mp4", playbackRate: 3 \}/);
   assert.match(media, /playbackRate=\{media\.playbackRate\}/);
+  assert.match(media, /muted playbackRate/);
+  assert.match(media, /objectFit="contain"/);
   assert.match(video, /config\.media\.doctor\.enabled \? <OptionalDoctorRecording/);
   assert.match(video, /config\.media\.doctor\.enabled \? null : <DoctorTerminal/);
+});
+
+test("VHS recording runs from the repository root and writes the package-local MP4", async () => {
+  const packageJson = JSON.parse(await read("package.json"));
+  const tape = await read("tapes/doctor-dry-run.tape");
+  assert.equal(packageJson.scripts["record:doctor"], "cd ../.. && vhs media/launch-video/tapes/doctor-dry-run.tape");
+  assert.match(tape, /^Output media\/launch-video\/public\/generated\/doctor-dry-run\.mp4/m);
+  assert.match(tape, /Set TypingSpeed 1ms/);
+  assert.match(tape, /npm run --silent doctor/);
+  assert.match(tape, /Wait\+Screen \/"roleCount": 6\//);
+  assert.match(tape, /Wait\+Screen \/"secretsCopiedToReport": false\//);
+  assert.match(tape, /secretsCopiedToReport/);
 });
 
 test("xAI dry-run script maps all approved PNGs to local-only request validation", async () => {

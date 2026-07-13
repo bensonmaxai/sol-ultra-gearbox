@@ -7,6 +7,6 @@ export const launchVideoConfig: LaunchVideoConfig = {
     routing: { enabled: true, generatedBackground: "generated/routing-background.png", videoEnabled: false, xaiClip: "xai/gear-routing.mp4" },
     failClosed: { enabled: true, generatedBackground: "generated/fail-closed-background.png", videoEnabled: false, xaiClip: "xai/fail-closed-gate.mp4" },
     rollback: { enabled: true, generatedBackground: "generated/rollback-background.png", videoEnabled: false, xaiClip: "xai/rollback-clean-state.mp4" },
-    doctor: { enabled: false, recordingPath: "generated/doctor-dry-run.mp4", playbackRate: 3 }
+    doctor: { enabled: true, recordingPath: "generated/doctor-dry-run.mp4", playbackRate: 3 }
   }
 };

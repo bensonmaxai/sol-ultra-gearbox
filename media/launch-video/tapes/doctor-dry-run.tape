@@ -1,12 +1,15 @@
-Output public/generated/doctor-dry-run.mp4
+Output media/launch-video/public/generated/doctor-dry-run.mp4
 Set Shell "bash"
-Set FontSize 22
-Set Width 1200
-Set Height 700
+Set FontSize 28
+Set TypingSpeed 1ms
+Set Width 1000
+Set Height 1000
 
-Type "npm run --silent doctor -- --json | jq '{pass: .pass, roleCount: (.roleChecks | length), checks: .checks}'"
+Type "npm run --silent doctor -- --json | jq '{pass: .pass, roleCount: (.roleChecks | length)}'"
 Enter
-Sleep 3s
-Type "node scripts/gearbox.mjs apply --promote-v2 --dry-run | jq '{pass: .pass, changes: {config: .changes.config.changed, agents: .changes.agents.changed, installedRoleCount: .changes.installedRoleCount, secretsCopiedToReport: .changes.secretsCopiedToReport}}'"
+Wait+Screen /"roleCount": 6/
+Sleep 1500ms
+Type "node scripts/gearbox.mjs apply --promote-v2 --dry-run | jq '{pass: .pass, configChanged: .changes.config.changed, agentsChanged: .changes.agents.changed, roleCount: .changes.installedRoleCount, secretsCopiedToReport: .changes.secretsCopiedToReport}'"
 Enter
-Sleep 3s
+Wait+Screen /"secretsCopiedToReport": false/
+Sleep 1500ms

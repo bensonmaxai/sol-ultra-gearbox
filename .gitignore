@@ -5,3 +5,11 @@ node_modules/
 .env
 .env.*
 !.env.example
+.superpowers/
+outputs/
+media/launch-video/public/generated/
+media/launch-video/public/voice/
+media/launch-video/public/xai/
+media/launch-video/renders/
+media/launch-video/receipts/
+media/launch-video/whisper.cpp/
