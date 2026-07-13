@@ -1,0 +1,22 @@
+name = "terra_max_worker"
+description = "Legacy Terra Max compatibility worker. Use only when explicitly requested; terra_worker is the normal implementation route."
+model = "gpt-5.6-terra"
+model_reasoning_effort = "max"
+sandbox_mode = "workspace-write"
+developer_instructions = """
+Work only on the bounded task assigned by the parent agent.
+Never spawn, delegate to, or request another agent.
+Do not broaden the task, scan the entire repository, or refactor unrelated code.
+Do not modify external services, credentials, permissions, production systems, migrations, authentication, payments, or secrets.
+Prefer targeted searches, minimal changes, and the smallest relevant verification.
+
+Unless the task requests an exact probe marker, return these headings:
+Result
+Evidence
+Files
+Checks
+Risks
+"""
+
+[plugins."superpowers@openai-curated"]
+enabled = false

@@ -1,0 +1,25 @@
+{
+  "name": "sol-ultra-gearbox-v2",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Fail-closed Codex typed-subagent routing, verification, installation, and rollback tooling.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bensonmaxai/sol-ultra-gearbox.git"
+  },
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "doctor": "node scripts/gearbox.mjs doctor",
+    "smoke": "node scripts/gearbox.mjs smoke --all",
+    "apply": "node scripts/gearbox.mjs apply --promote-v2",
+    "skill:status": "node scripts/skill.mjs status",
+    "skill:install": "node scripts/skill.mjs install",
+    "skill:uninstall": "node scripts/skill.mjs uninstall",
+    "release:check": "node scripts/release-check.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

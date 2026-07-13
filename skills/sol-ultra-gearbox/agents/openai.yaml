@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sol Ultra Gearbox"
+  short_description: "Safely validate and route Codex typed subagents"
+  default_prompt: "Use $sol-ultra-gearbox to audit this Codex multi-agent setup and report the safest verified next action."

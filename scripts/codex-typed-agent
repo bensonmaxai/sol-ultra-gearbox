@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ -n "${CODEX_BIN:-}" ]]; then
+  CODEX_BIN_PATH="$CODEX_BIN"
+elif [[ -x /Applications/ChatGPT.app/Contents/Resources/codex ]]; then
+  CODEX_BIN_PATH="/Applications/ChatGPT.app/Contents/Resources/codex"
+else
+  CODEX_BIN_PATH="codex"
+fi
+CODEX_HOME_DIR="${CODEX_HOME:-${HOME}/.codex}"
+
+usage() {
+  printf '%s\n' "Usage: codex-typed-agent <luna_clerk|terra_explorer|terra_worker|sol_reviewer|terra_ultra_specialist|terra_max_worker> <task>" >&2
+}
+
+if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+if (( $# < 2 )); then
+  usage
+  exit 2
+fi
+
+ROLE="$1"
+shift
+TASK="$*"
+
+case "$ROLE" in
+  luna_clerk)
+    ROLE_FILE="$CODEX_HOME_DIR/agents/luna-clerk.toml"
+    ROLE_DESCRIPTION="Read-only Luna clerk for deterministic inventory, extraction, classification, transformation, and mechanical checks."
+    SANDBOX="read-only"
+    ;;
+  terra_explorer)
+    ROLE_FILE="$CODEX_HOME_DIR/agents/terra-explorer.toml"
+    ROLE_DESCRIPTION="Read-only Terra explorer for code paths, logs, documentation, tests, and evidence collection."
+    SANDBOX="read-only"
+    ;;
+  terra_worker)
+    ROLE_FILE="$CODEX_HOME_DIR/agents/terra-worker.toml"
+    ROLE_DESCRIPTION="Terra High implementation worker for planned, bounded changes with an explicit and exclusive write scope."
+    SANDBOX="workspace-write"
+    ;;
+  sol_reviewer)
+    ROLE_FILE="$CODEX_HOME_DIR/agents/sol-reviewer.toml"
+    ROLE_DESCRIPTION="Read-only Sol reviewer for requirement, diff, regression, security-boundary, and test-evidence review."
+    SANDBOX="read-only"
+    ;;
+  terra_ultra_specialist)
+    ROLE_FILE="$CODEX_HOME_DIR/agents/terra-ultra-specialist.toml"
+    ROLE_DESCRIPTION="Exceptional Terra Ultra specialist for large, module-scale, self-contained work with a safe rollback path."
+    SANDBOX="workspace-write"
+    ;;
+  terra_max_worker)
+    ROLE_FILE="$CODEX_HOME_DIR/agents/terra-max-worker.toml"
+    ROLE_DESCRIPTION="Legacy Terra Max compatibility worker. Use only when explicitly requested; terra_worker is the normal implementation route."
+    SANDBOX="workspace-write"
+    ;;
+  *)
+    printf 'Unsupported role: %s\n' "$ROLE" >&2
+    usage
+    exit 2
+    ;;
+esac
+
+if [[ ! -f "$ROLE_FILE" ]]; then
+  printf 'Missing installed role file: %s\n' "$ROLE_FILE" >&2
+  exit 3
+fi
+
+PARENT_PROMPT="Run one explicitly authorized typed-subagent task. Call spawn_agent exactly once using agent_type=\"${ROLE}\", task_name=\"typed_role_task\", fork_turns=\"none\", and the self-contained message below. Do not pass model, reasoning_effort, or service_tier; the role TOML owns them. Wait for the child, close it, and return its concise result and verification. Do not spawn any other agent. Task: ${TASK}"
+
+exec "$CODEX_BIN_PATH" \
+  --strict-config \
+  -c 'features.multi_agent_v2.enabled=true' \
+  -c 'features.multi_agent_v2.max_concurrent_threads_per_session=2' \
+  -c 'features.multi_agent_v2.hide_spawn_agent_metadata=false' \
+  -c 'features.multi_agent_v2.tool_namespace="agents"' \
+  -c 'agents.max_depth=1' \
+  -c "agents.${ROLE}.description=\"${ROLE_DESCRIPTION}\"" \
+  -c "agents.${ROLE}.config_file=\"${ROLE_FILE}\"" \
+  -c 'model="gpt-5.6-sol"' \
+  -c 'model_reasoning_effort="max"' \
+  -c 'plugins."superpowers@openai-curated".enabled=false' \
+  -s "$SANDBOX" \
+  -a on-request \
+  -C "$PWD" \
+  exec \
+  --json \
+  --skip-git-repo-check \
+  --ignore-user-config \
+  "$PARENT_PROMPT"
