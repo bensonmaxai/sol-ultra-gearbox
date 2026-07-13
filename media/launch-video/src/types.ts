@@ -21,6 +21,7 @@ export type DoctorMedia = {
 export type LaunchVideoConfig = {
   githubUrl: string;
   voiceoverPath?: string;
+  voiceoverVolume?: number;
   showCaptions: boolean;
   media: {
     routing: SceneMedia;

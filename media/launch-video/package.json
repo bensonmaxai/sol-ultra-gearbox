@@ -13,7 +13,8 @@
     "render:clean": "node scripts/render.mjs clean",
     "record:doctor": "cd ../.. && vhs media/launch-video/tapes/doctor-dry-run.tape",
     "copy:social": "node scripts/copy-social.mjs",
-    "xai:dry-run": "bash scripts/xai-dry-run.sh"
+    "xai:dry-run": "bash scripts/xai-dry-run.sh",
+    "xai:evidence": "node scripts/xai-postrun-evidence.mjs --evidence-date 2026-07-13"
   },
   "dependencies": {
     "@remotion/captions": "^4.0.390",

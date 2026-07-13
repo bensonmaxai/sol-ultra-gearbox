@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "evidenceType": "sanitized-xai-image-to-video-postrun",
+  "evidenceDate": "2026-07-13",
+  "provider": "xAI",
+  "requestedModel": "grok-imagine-video",
+  "runtimeModelVerification": "provider receipt records the requested model; no separate runtime-model field was returned",
+  "generationPolicy": {
+    "ownerAuthorizedRequests": 3,
+    "automaticRetryAllowed": false,
+    "observedSuccessfulOutputs": 3
+  },
+  "clips": [
+    {
+      "id": "gear-routing",
+      "file": "public/xai/gear-routing.mp4",
+      "bytes": 6889951,
+      "sha256": "13a4c3c45f56753a107a748388c166b9e4a268797008350c0bc2612380b21f08",
+      "media": {
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "width": 720,
+        "height": 1280,
+        "fps": "24/1",
+        "durationSeconds": 4.041667
+      },
+      "receipt": {
+        "availability": "recovered",
+        "completeness": "recovered_allowlisted_fields_only",
+        "status": "done",
+        "requestedModel": "grok-imagine-video",
+        "mode": "image-to-video",
+        "endpoint": "/videos/generations",
+        "requestIdSha256": "5d1d2dd56c82d0a4138c0d6c206e24e10e2a4e86b3b9995dfe78eff27442d40f",
+        "recoveryMethod": "sanitized persisted Codex session evidence"
+      }
+    },
+    {
+      "id": "fail-closed-gate",
+      "file": "public/xai/fail-closed-gate.mp4",
+      "bytes": 6038725,
+      "sha256": "1d78c3d79827bc0d6663ef780e95bf1ec166a348b67ac9107ea56d84f73e0c69",
+      "media": {
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "width": 720,
+        "height": 1280,
+        "fps": "24/1",
+        "durationSeconds": 4.041667
+      },
+      "receipt": {
+        "availability": "recovered",
+        "completeness": "recovered_allowlisted_fields_only",
+        "status": "done",
+        "requestedModel": "grok-imagine-video",
+        "mode": "image-to-video",
+        "endpoint": "/videos/generations",
+        "requestIdSha256": "3264668149a727c679e7e0384da5ee3db4df53b8b376b3f1e3ba751649b2999d",
+        "recoveryMethod": "sanitized persisted Codex session evidence"
+      }
+    },
+    {
+      "id": "rollback-clean-state",
+      "file": "public/xai/rollback-clean-state.mp4",
+      "bytes": 2407572,
+      "sha256": "e910f3a8a0a50bcdc97193b63a67690770684f416b6d3d284299ccab13829e57",
+      "media": {
+        "codec": "h264",
+        "pixelFormat": "yuv420p",
+        "width": 720,
+        "height": 1280,
+        "fps": "24/1",
+        "durationSeconds": 4.041667
+      },
+      "receipt": {
+        "availability": "recovered",
+        "completeness": "recovered_allowlisted_fields_only",
+        "status": "done",
+        "requestedModel": "grok-imagine-video",
+        "mode": "image-to-video",
+        "endpoint": "/videos/generations",
+        "requestIdSha256": "f3d84ab147f3243613310829649c3385fe88627979ca501a888c19b52b714212",
+        "recoveryMethod": "sanitized persisted Codex session evidence"
+      }
+    }
+  ]
+}

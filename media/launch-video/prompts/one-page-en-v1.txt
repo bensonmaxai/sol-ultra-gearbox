@@ -1,0 +1,71 @@
+Use case: ads-marketing / infographic-diagram
+Asset type: premium 4:5 English social-media one-page product explainer poster
+
+Input images:
+- Image 1 is the approved campaign cover. Preserve its deep navy background, bold white-and-gold typography hierarchy, small neutral gear-routing mark, and restrained premium spacing.
+- Image 2 is the approved typed-routing scene. Preserve the cinematic dimensional gearbox language and the Sol gold, Terra cyan, and Luna purple data-flow palette. Do not copy its bilingual subtitle box.
+- Image 3 is the approved release-evidence scene. Preserve its credible technical-evidence tone and central gearbox silhouette. Do not copy its QR code, subtitle box, or existing text layout.
+- Use all three only as campaign art-direction references. Create a new unified one-page composition rather than collaging or reproducing them.
+
+Primary request:
+Create a visually explosive, premium launch poster for an open-source developer tool called Sol Ultra Gearbox. It must feel like elite AI infrastructure, runtime security, and industrial precision—not a generic SaaS template. Build the composition around a large dimensional digital gearbox with concentric verification rings, routed data paths, and three typed agent nodes. The design should explain routing, runtime verification, fail-closed behavior, and rollback in one fast scan.
+
+Audience:
+AI engineering leads and teams building auditable multi-agent workflows.
+
+Scene and visual system:
+- Deep near-black navy technical backdrop with subtle grid depth and restrained cinematic haze.
+- Central precision-machined digital gearbox, sophisticated 3D cutaway, luminous telemetry arcs, no real-world brand logo.
+- Sol node in warm gold, Terra node in electric cyan, Luna node in ultraviolet purple.
+- A sharp red safety gate motif communicates FAIL CLOSED without dominating the palette.
+- Thin evidence lines, metadata rings, controlled glass and brushed-metal surfaces.
+- Editorial Swiss typography combined with cinematic industrial-tech art direction.
+- Luxurious, high-contrast, highly legible, balanced negative space, exceptional information hierarchy.
+- No people, no robots, no stock-photo imagery, no fake app UI, no fake terminal screenshot, no QR code, no watermark.
+
+Composition:
+- Portrait 4:5 layout.
+- Strong headline zone at the top.
+- Hero gearbox in the middle, with a clean four-step explanatory path integrated around it.
+- Compact proof strip near the bottom.
+- Clear call-to-action and GitHub URL at the bottom.
+- Keep every text block inside generous safe margins.
+
+Render ALL text below verbatim. Do not add, remove, paraphrase, duplicate, misspell, or invent any other words:
+
+"RUNTIME-VERIFIED MULTI-AGENT ORCHESTRATION"
+
+"SOL ULTRA GEARBOX"
+
+"DON'T TRUST THE LABEL. VERIFY THE RUNTIME."
+
+"Fail-closed routing, verification, and rollback for Codex typed subagents."
+
+"01  ROUTE"
+"Typed Sol, Terra, and Luna roles"
+
+"02  VERIFY"
+"Model · Effort · Sandbox · Lineage · Tokens · Filesystem"
+
+"03  STOP"
+"Missing or mismatched? Fail closed."
+
+"04  REVERSE"
+"Dry-run previews. Managed apply includes rollback."
+
+"23 TESTS PASSED"
+"6-ROLE SMOKE PASS"
+"GLOBAL CONFIG UNCHANGED"
+
+"AUDIT IT. REPRODUCE IT. REVERSE IT."
+
+"github.com/bensonmaxai/sol-ultra-gearbox"
+
+Typography constraints:
+- Render text as crisp professional English typography, not illustrative scribbles.
+- The title and tagline must be the clearest elements after the hero gearbox.
+- Smaller explanatory copy must remain readable on a phone screen.
+- Use no text other than the exact quoted copy above.
+
+Final quality:
+Award-level technology campaign art, polished enough for a major open-source launch, dramatic but credible, precise rather than noisy, no cheap neon cyberpunk clichés.

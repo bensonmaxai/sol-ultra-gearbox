@@ -15,7 +15,7 @@ export const OptionalDoctorRecording = ({ media }: { media: DoctorMedia }) => {
   return <AbsoluteFill style={{ overflow: "hidden", backgroundColor: "#05070B" }}><Video src={staticFile(media.recordingPath)} muted playbackRate={media.playbackRate} objectFit="contain" style={{ width: "100%", height: "100%", opacity: 0.92 }} /></AbsoluteFill>;
 };
 
-export const OptionalVoiceover = ({ voiceoverPath }: { voiceoverPath?: string }) => {
+export const OptionalVoiceover = ({ voiceoverPath, volume = 1 }: { voiceoverPath?: string; volume?: number }) => {
   if (!voiceoverPath) return null;
-  return <AbsoluteFill><Audio src={staticFile(voiceoverPath)} /></AbsoluteFill>;
+  return <AbsoluteFill><Audio src={staticFile(voiceoverPath)} volume={volume} /></AbsoluteFill>;
 };

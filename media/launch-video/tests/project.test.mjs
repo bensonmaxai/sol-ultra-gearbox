@@ -41,11 +41,12 @@ test("registers the locked 45-second vertical composition", async () => {
   assert.doesNotMatch(root, /doctor:\s*\{/);
 });
 
-test("caption pairs are chronological, readable, and exactly fill the runtime", async () => {
+test("caption pairs are chronological, readable, and fit the approved narration", async () => {
   const captions = JSON.parse(await read("src/data/captions.json"));
   assert.ok(captions.length >= 20);
   assert.equal(captions[0].startMs, 0);
-  assert.equal(captions.at(-1).endMs, 45_000);
+  assert.equal(captions.at(-1).endMs, 38_900);
+  assert.ok(captions.at(-1).endMs < 45_000, "leave an uncaptioned end-card hold");
   for (let index = 0; index < captions.length; index += 1) {
     const current = captions[index];
     assert.ok(current.en.length > 0 && current.zhTW.length > 0);
@@ -59,12 +60,12 @@ test("caption pairs are chronological, readable, and exactly fill the runtime", 
 test("locked bilingual narration starts and ends inside each scene boundary", async () => {
   const captions = JSON.parse(await read("src/data/captions.json"));
   const scenes = [
-    [0, 6_000, "Most AI agent workflows trust what a model says it is. Sol Ultra Gearbox verifies what actually ran.", "多數 AI 代理工作流程只相信模型自稱的身分。Sol Ultra Gearbox 驗證實際執行的是誰。"],
-    [6_000, 13_000, "It routes Codex work to typed Sol, Terra, and Luna roles.", "它會將 Codex 工作分派給明確定義的 Sol、Terra 與 Luna 角色。"],
-    [13_000, 23_000, "Then it checks the real model, reasoning effort, sandbox, lineage, token usage, and filesystem scope from persisted runtime metadata.", "再從保存的執行中繼資料檢查實際模型、推理強度、沙箱、父子關係、Token 使用量與檔案系統範圍。"],
-    [23_000, 29_000, "If anything is missing or mismatched, it fails closed.", "任何資料缺失或不一致，系統就會 fail closed。"],
-    [29_000, 38_000, "The built-in doctor validates six role profiles. Dry-run previews global changes, while managed apply includes rollback.", "內建 doctor 可驗證六個角色設定；dry-run 會預覽全域變更，受控 apply 則包含回滾。"],
-    [38_000, 45_000, "This release passed twenty-three tests and a six-role runtime smoke test. If your team needs multi-agent workflows you can audit, reproduce, and reverse, try Sol Ultra Gearbox on GitHub.", "這個版本已通過 23 項測試與六角色 runtime smoke test。需要可稽核、可重現、可逆的多代理工作流，歡迎到 GitHub 試用。"],
+    [0, 7_100, "Most AI agent workflows trust what a model says it is. Sol Ultra Gearbox verifies what actually ran.", "多數 AI 代理工作流程只相信模型自稱的身分。Sol Ultra Gearbox 驗證實際執行的是誰。"],
+    [7_100, 10_900, "It routes Codex work to typed Sol, Terra, and Luna roles.", "它會將 Codex 工作分派給明確定義的 Sol、Terra 與 Luna 角色。"],
+    [10_900, 19_233, "Then it checks the real model, reasoning effort, sandbox, lineage, token usage, and filesystem scope from persisted runtime metadata.", "再從保存的執行中繼資料檢查實際模型、推理強度、沙箱、父子關係、Token 使用量與檔案系統範圍。"],
+    [19_233, 22_433, "If anything is missing or mismatched, it fails closed.", "任何資料缺失或不一致，系統就會 fail closed。"],
+    [22_433, 29_167, "The built-in doctor validates six role profiles. Dry-run previews global changes, while managed apply includes rollback.", "內建 doctor 可驗證六個角色設定；dry-run 會預覽全域變更，受控 apply 則包含回滾。"],
+    [29_167, 38_900, "This release passed twenty-three tests and a six-role runtime smoke test. If your team needs multi-agent workflows you can audit, reproduce, and reverse, try Sol Ultra Gearbox on GitHub.", "這個版本已通過 23 項測試與六角色 runtime smoke test。需要可稽核、可重現、可逆的多代理工作流，歡迎到 GitHub 試用。"],
   ];
   for (const [startMs, endMs, en, zhTW] of scenes) {
     const sceneCaptions = captions.filter((caption) => caption.startMs >= startMs && caption.endMs <= endMs);
@@ -108,13 +109,15 @@ test("public release claims remain backed by sanitized persisted evidence", asyn
   assert.doesNotMatch(evidence, /\/Users\//);
 });
 
-test("optional media uses approved PNGs without requesting missing videos and keeps Doctor fallback", async () => {
+test("optional media enables approved xAI clips, local voiceover, and Doctor fallback", async () => {
   const config = await read("src/data/config.ts");
   const media = await read("src/components/OptionalMedia.tsx");
   const video = await read("src/LaunchVideo.tsx");
   for (const background of ["routing-background.png", "fail-closed-background.png", "rollback-background.png"]) {
-    assert.match(config, new RegExp(`enabled: true, generatedBackground: "generated/${background}", videoEnabled: false`));
+    assert.match(config, new RegExp(`enabled: true, generatedBackground: "generated/${background}", videoEnabled: true`));
   }
+  assert.match(config, /voiceoverPath: "voice\/narration\.wav"/);
+  assert.match(config, /voiceoverVolume: 0\.75/);
   assert.match(media, /<Img src=\{staticFile\(media\.generatedBackground\)\}/);
   assert.match(media, /media\.videoEnabled && media\.xaiClip/);
   assert.match(config, /doctor: \{ enabled: true, recordingPath: "generated\/doctor-dry-run\.mp4", playbackRate: 3 \}/);
@@ -123,6 +126,12 @@ test("optional media uses approved PNGs without requesting missing videos and ke
   assert.match(media, /objectFit="contain"/);
   assert.match(video, /config\.media\.doctor\.enabled \? <OptionalDoctorRecording/);
   assert.match(video, /config\.media\.doctor\.enabled \? null : <DoctorTerminal/);
+});
+
+test("scene frame boundaries follow the approved voice timing and preserve the end card", async () => {
+  const video = await read("src/LaunchVideo.tsx");
+  assert.match(video, /SCENE_FRAME_BOUNDARIES = \[0, 213, 327, 577, 673, 875, 1350\]/);
+  assert.match(video, /durationInFrames=\{sceneDuration\(5\)\}/);
 });
 
 test("VHS recording runs from the repository root and writes the package-local MP4", async () => {
@@ -185,6 +194,68 @@ test("xAI dry-run script maps all approved PNGs to local-only request validation
   assert.doesNotMatch(script, /\/Users\//);
 });
 
+test("xAI post-run evidence binds recovered receipts to the three local clips without publishing request IDs", async () => {
+  const packageJson = JSON.parse(await read("package.json"));
+  const script = await read("scripts/xai-postrun-evidence.mjs");
+  const copyScript = await read("scripts/copy-social.mjs");
+  const evidence = JSON.parse(await read("manifests/xai-generation-evidence.json"));
+
+  assert.equal(packageJson.scripts["xai:evidence"], "node scripts/xai-postrun-evidence.mjs --evidence-date 2026-07-13");
+  assert.match(script, /createHash\("sha256"\)/);
+  assert.match(script, /ffprobe/);
+  for (const [id, clip, receipt] of [
+    ["gear-routing", "public/xai/gear-routing.mp4", "receipts/gear-routing.json"],
+    ["fail-closed-gate", "public/xai/fail-closed-gate.mp4", "receipts/fail-closed-gate.json"],
+    ["rollback-clean-state", "public/xai/rollback-clean-state.mp4", "receipts/rollback-clean-state.json"],
+  ]) {
+    assert.ok(script.includes(id));
+    assert.ok(script.includes(clip));
+    assert.ok(script.includes(receipt));
+  }
+
+  assert.equal(evidence.schemaVersion, 1);
+  assert.equal(evidence.evidenceType, "sanitized-xai-image-to-video-postrun");
+  assert.equal(evidence.evidenceDate, "2026-07-13");
+  assert.equal(evidence.provider, "xAI");
+  assert.equal(evidence.requestedModel, "grok-imagine-video");
+  assert.deepEqual(evidence.generationPolicy, {
+    ownerAuthorizedRequests: 3,
+    automaticRetryAllowed: false,
+    observedSuccessfulOutputs: 3,
+  });
+  assert.deepEqual(evidence.clips.map((clip) => clip.id), ["gear-routing", "fail-closed-gate", "rollback-clean-state"]);
+  for (const clip of evidence.clips) {
+    assert.match(clip.sha256, /^[a-f0-9]{64}$/);
+    assert.ok(clip.bytes > 0);
+    assert.equal(clip.media.codec, "h264");
+    assert.equal(clip.media.pixelFormat, "yuv420p");
+    assert.equal(clip.media.width, 720);
+    assert.equal(clip.media.height, 1280);
+    assert.equal(clip.media.fps, "24/1");
+    assert.ok(clip.media.durationSeconds >= 4 && clip.media.durationSeconds < 4.1);
+    assert.equal(clip.receipt.availability, "recovered");
+    assert.equal(clip.receipt.status, "done");
+    assert.match(clip.receipt.requestIdSha256, /^[a-f0-9]{64}$/);
+  }
+  const serialized = JSON.stringify(evidence);
+  assert.doesNotMatch(serialized, /request_id|https?:\/\/|signed[_-]?url|\/Users\//i);
+  assert.match(copyScript, /manifests\/xai-generation-evidence\.json/);
+});
+
+test("Remotion free-license declaration matches the dated owner-attested eligibility review", async () => {
+  const config = await read("remotion.config.ts");
+  const review = await read("REMOTION_LICENSE_REVIEW.md");
+  assert.match(config, /import \{ Config \} from "@remotion\/cli\/config"/);
+  assert.match(config, /Config\.setPublicLicenseKey\("free-license"\)/);
+  assert.match(review, /Reviewed: 2026-07-14/);
+  assert.match(review, /Installed Remotion version: 4\.0\.489/);
+  assert.match(review, /organization or team using Remotion has 3 people or fewer/);
+  assert.match(review, /Free License permits commercial use/);
+  assert.match(review, /https:\/\/github\.com\/remotion-dev\/remotion\/blob\/main\/LICENSE\.md/);
+  assert.match(review, /https:\/\/www\.remotion\.pro\/license/);
+  assert.match(review, /grows to 4 people or more/);
+});
+
 test("owner-review keyframes have separate reproducible still-image prompts", async () => {
   for (const prompt of ["01-routing-data-streams.md", "02-fail-closed-gate.md", "03-rollback-clean-state.md"]) {
     const source = await read(`prompts/keyframes/${prompt}`);
@@ -202,6 +273,9 @@ test("generated delivery artifacts stay ignored while reproducible source stays 
     "media/launch-video/public/xai/gear-routing.mp4",
     "media/launch-video/renders/gearbox-launch-clean.mp4",
     "media/launch-video/receipts/gear-routing.json",
+    "media/launch-video/local-voice/profiles/ptt-voice/profile.json",
+    "media/launch-video/local-voice/outputs/sol-ultra-gearbox-launch-en.wav",
+    "media/launch-video/local-voice/tests/__pycache__/test_ptt_voice.cpython-312.pyc",
   ];
   for (const path of generated) {
     assert.equal(spawnSync("git", ["check-ignore", "-q", path], { cwd: repositoryRoot }).status, 0, `${path} must be ignored`);
@@ -210,6 +284,13 @@ test("generated delivery artifacts stay ignored while reproducible source stays 
     "media/launch-video/src/Root.tsx",
     "media/launch-video/prompts/keyframes/01-routing-data-streams.md",
     "media/launch-video/tapes/jq/doctor-pass.jq",
+    "media/launch-video/scripts/xai-postrun-evidence.mjs",
+    "media/launch-video/manifests/xai-generation-evidence.json",
+    "media/launch-video/local-voice/README.md",
+    "media/launch-video/local-voice/ptt_voice.py",
+    "media/launch-video/prompts/one-page-en-v1.txt",
+    "media/launch-video/remotion.config.ts",
+    "media/launch-video/REMOTION_LICENSE_REVIEW.md",
   ]) {
     assert.equal(spawnSync("git", ["check-ignore", "-q", path], { cwd: repositoryRoot }).status, 1, `${path} must remain source-controlled`);
   }

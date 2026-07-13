@@ -13,3 +13,7 @@ media/launch-video/public/xai/
 media/launch-video/renders/
 media/launch-video/receipts/
 media/launch-video/whisper.cpp/
+media/launch-video/local-voice/.venv/
+media/launch-video/local-voice/profiles/
+media/launch-video/local-voice/outputs/
+media/launch-video/local-voice/**/__pycache__/

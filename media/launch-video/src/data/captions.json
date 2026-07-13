@@ -1,152 +1,24 @@
 [
-  {
-    "startMs": 0,
-    "endMs": 2000,
-    "en": "Most AI agent workflows trust",
-    "zhTW": "多數 AI 代理工作流程只相信"
-  },
-  {
-    "startMs": 2000,
-    "endMs": 4000,
-    "en": "what a model says it is.",
-    "zhTW": "模型自稱的身分。"
-  },
-  {
-    "startMs": 4000,
-    "endMs": 6000,
-    "en": "Sol Ultra Gearbox verifies what actually ran.",
-    "zhTW": "Sol Ultra Gearbox 驗證實際執行的是誰。"
-  },
-  {
-    "startMs": 6000,
-    "endMs": 7750,
-    "en": "It routes Codex work",
-    "zhTW": "它會將 Codex 工作"
-  },
-  {
-    "startMs": 7750,
-    "endMs": 9500,
-    "en": "to typed Sol,",
-    "zhTW": "分派給明確定義的\u0020"
-  },
-  {
-    "startMs": 9500,
-    "endMs": 11250,
-    "en": "Terra, and Luna",
-    "zhTW": "Sol、Terra 與\u0020"
-  },
-  {
-    "startMs": 11250,
-    "endMs": 13000,
-    "en": "roles.",
-    "zhTW": "Luna 角色。"
-  },
-  {
-    "startMs": 13000,
-    "endMs": 15000,
-    "en": "Then it checks the real model,",
-    "zhTW": "再從保存的執行中繼資料"
-  },
-  {
-    "startMs": 15000,
-    "endMs": 17000,
-    "en": "reasoning effort, sandbox,",
-    "zhTW": "檢查實際模型、推理強度、"
-  },
-  {
-    "startMs": 17000,
-    "endMs": 19000,
-    "en": "lineage, token usage,",
-    "zhTW": "沙箱、父子關係、"
-  },
-  {
-    "startMs": 19000,
-    "endMs": 21000,
-    "en": "and filesystem scope",
-    "zhTW": "Token 使用量與"
-  },
-  {
-    "startMs": 21000,
-    "endMs": 23000,
-    "en": "from persisted runtime metadata.",
-    "zhTW": "檔案系統範圍。"
-  },
-  {
-    "startMs": 23000,
-    "endMs": 25000,
-    "en": "If anything is missing",
-    "zhTW": "任何資料缺失或"
-  },
-  {
-    "startMs": 25000,
-    "endMs": 27000,
-    "en": "or mismatched,",
-    "zhTW": "不一致，"
-  },
-  {
-    "startMs": 27000,
-    "endMs": 29000,
-    "en": "it fails closed.",
-    "zhTW": "系統就會 fail closed。"
-  },
-  {
-    "startMs": 29000,
-    "endMs": 30800,
-    "en": "The built-in doctor validates",
-    "zhTW": "內建 doctor 可驗證"
-  },
-  {
-    "startMs": 30800,
-    "endMs": 32600,
-    "en": "six role profiles.",
-    "zhTW": "六個角色設定；"
-  },
-  {
-    "startMs": 32600,
-    "endMs": 34400,
-    "en": "Dry-run previews global changes,",
-    "zhTW": "dry-run 會預覽全域變更，"
-  },
-  {
-    "startMs": 34400,
-    "endMs": 36200,
-    "en": "while managed apply",
-    "zhTW": "受控 apply\u0020"
-  },
-  {
-    "startMs": 36200,
-    "endMs": 38000,
-    "en": "includes rollback.",
-    "zhTW": "則包含回滾。"
-  },
-  {
-    "startMs": 38000,
-    "endMs": 39400,
-    "en": "This release passed twenty-three tests",
-    "zhTW": "這個版本已通過 23 項測試"
-  },
-  {
-    "startMs": 39400,
-    "endMs": 40800,
-    "en": "and a six-role runtime smoke test.",
-    "zhTW": "與六角色 runtime smoke test。"
-  },
-  {
-    "startMs": 40800,
-    "endMs": 42200,
-    "en": "If your team needs multi-agent workflows",
-    "zhTW": "需要可稽核、可重現、"
-  },
-  {
-    "startMs": 42200,
-    "endMs": 43600,
-    "en": "you can audit, reproduce, and reverse,",
-    "zhTW": "可逆的多代理工作流，"
-  },
-  {
-    "startMs": 43600,
-    "endMs": 45000,
-    "en": "try Sol Ultra Gearbox on GitHub.",
-    "zhTW": "歡迎到 GitHub 試用。"
-  }
+  { "startMs": 0, "endMs": 1800, "en": "Most AI agent workflows", "zhTW": "多數 AI 代理工作流程" },
+  { "startMs": 1800, "endMs": 3700, "en": "trust what a model says it is.", "zhTW": "只相信模型自稱的身分。" },
+  { "startMs": 3700, "endMs": 5240, "en": "Sol Ultra Gearbox", "zhTW": "Sol Ultra Gearbox " },
+  { "startMs": 5240, "endMs": 7100, "en": "verifies what actually ran.", "zhTW": "驗證實際執行的是誰。" },
+  { "startMs": 7100, "endMs": 8780, "en": "It routes Codex work to", "zhTW": "它會將 Codex 工作" },
+  { "startMs": 8780, "endMs": 10900, "en": "typed Sol, Terra, and Luna roles.", "zhTW": "分派給明確定義的 Sol、Terra 與 Luna 角色。" },
+  { "startMs": 10900, "endMs": 12700, "en": "Then it checks the real model,", "zhTW": "再從保存的執行中繼資料" },
+  { "startMs": 12700, "endMs": 14460, "en": "reasoning effort, sandbox,", "zhTW": "檢查實際模型、推理強度、" },
+  { "startMs": 14460, "endMs": 16180, "en": "lineage, token usage,", "zhTW": "沙箱、父子關係、" },
+  { "startMs": 16180, "endMs": 17560, "en": "and filesystem scope from", "zhTW": "Token 使用量與" },
+  { "startMs": 17560, "endMs": 19233, "en": "persisted runtime metadata.", "zhTW": "檔案系統範圍。" },
+  { "startMs": 19233, "endMs": 20560, "en": "If anything is missing or", "zhTW": "任何資料缺失或" },
+  { "startMs": 20560, "endMs": 22433, "en": "mismatched, it fails closed.", "zhTW": "不一致，系統就會 fail closed。" },
+  { "startMs": 22433, "endMs": 24080, "en": "The built-in doctor validates", "zhTW": "內建 doctor 可驗證" },
+  { "startMs": 24080, "endMs": 25540, "en": "six role profiles.", "zhTW": "六個角色設定；" },
+  { "startMs": 25540, "endMs": 27280, "en": "Dry-run previews global changes,", "zhTW": "dry-run 會預覽全域變更，" },
+  { "startMs": 27280, "endMs": 29167, "en": "while managed apply includes rollback.", "zhTW": "受控 apply 則包含回滾。" },
+  { "startMs": 29167, "endMs": 31220, "en": "This release passed twenty-three tests", "zhTW": "這個版本已通過 23 項測試" },
+  { "startMs": 31220, "endMs": 33320, "en": "and a six-role runtime smoke test.", "zhTW": "與六角色 runtime smoke test。" },
+  { "startMs": 33320, "endMs": 35500, "en": "If your team needs multi-agent workflows", "zhTW": "需要可稽核、可重現、" },
+  { "startMs": 35500, "endMs": 37340, "en": "you can audit, reproduce, and reverse,", "zhTW": "可逆的多代理工作流，" },
+  { "startMs": 37340, "endMs": 38900, "en": "try Sol Ultra Gearbox on GitHub.", "zhTW": "歡迎到 GitHub 試用。" }
 ]

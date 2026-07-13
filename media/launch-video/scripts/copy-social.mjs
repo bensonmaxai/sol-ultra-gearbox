@@ -11,6 +11,7 @@ const artifacts = [
   ["captions/launch.en.srt", "launch.en.srt"],
   ["captions/launch.zh-TW.srt", "launch.zh-TW.srt"],
   ["social/zh-TW.md", "social-copy-zh-TW.md"],
+  ["manifests/xai-generation-evidence.json", "xai-generation-evidence.json"],
 ];
 
 for (const [source] of artifacts) {

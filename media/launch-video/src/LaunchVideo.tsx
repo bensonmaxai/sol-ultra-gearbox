@@ -1,4 +1,4 @@
-import { AbsoluteFill, Sequence, interpolate, useCurrentFrame, useVideoConfig } from "remotion";
+import { AbsoluteFill, Sequence, interpolate, useCurrentFrame } from "remotion";
 import type { ReactNode } from "react";
 import { Background } from "./components/Background";
 import { BrandMark } from "./components/BrandMark";
@@ -8,7 +8,8 @@ import { QrCode } from "./components/QrCode";
 import type { LaunchVideoConfig } from "./types";
 
 const COLORS = { sol: "#FFCC66", terra: "#72DEFF", luna: "#C39BFF", ink: "#101722", text: "#F7F9FC", muted: "#A9B7C8" };
-const sec = (seconds: number, fps: number) => Math.round(seconds * fps);
+const SCENE_FRAME_BOUNDARIES = [0, 213, 327, 577, 673, 875, 1350] as const;
+const sceneDuration = (index: number) => SCENE_FRAME_BOUNDARIES[index + 1] - SCENE_FRAME_BOUNDARIES[index];
 const fade = (frame: number, duration = 12) => interpolate(frame, [0, duration], [0, 1], { extrapolateRight: "clamp" });
 
 const Topline = ({ label }: { label: string }) => (
@@ -51,6 +52,5 @@ const EvidenceScene = ({ config }: { config: LaunchVideoConfig }) => <SceneShell
 const SceneShell = ({ children }: { children: ReactNode }) => <AbsoluteFill style={{ padding: "144px 100px 0", fontFamily: "Arial, sans-serif" }}>{children}</AbsoluteFill>;
 
 export const LaunchVideo = (config: LaunchVideoConfig) => {
-  const { fps } = useVideoConfig();
-  return <AbsoluteFill><Background /><Sequence from={sec(0, fps)} durationInFrames={sec(6, fps)}><IntroScene /></Sequence><Sequence from={sec(6, fps)} durationInFrames={sec(7, fps)}><RoutingScene config={config} /></Sequence><Sequence from={sec(13, fps)} durationInFrames={sec(10, fps)}><ValidationScene /></Sequence><Sequence from={sec(23, fps)} durationInFrames={sec(6, fps)}><FailClosedScene config={config} /></Sequence><Sequence from={sec(29, fps)} durationInFrames={sec(9, fps)}><DoctorScene config={config} /></Sequence><Sequence from={sec(38, fps)} durationInFrames={sec(7, fps)}><EvidenceScene config={config} /></Sequence>{config.showCaptions ? <CaptionLayer /> : null}<OptionalVoiceover voiceoverPath={config.voiceoverPath} /></AbsoluteFill>;
+  return <AbsoluteFill><Background /><Sequence from={SCENE_FRAME_BOUNDARIES[0]} durationInFrames={sceneDuration(0)}><IntroScene /></Sequence><Sequence from={SCENE_FRAME_BOUNDARIES[1]} durationInFrames={sceneDuration(1)}><RoutingScene config={config} /></Sequence><Sequence from={SCENE_FRAME_BOUNDARIES[2]} durationInFrames={sceneDuration(2)}><ValidationScene /></Sequence><Sequence from={SCENE_FRAME_BOUNDARIES[3]} durationInFrames={sceneDuration(3)}><FailClosedScene config={config} /></Sequence><Sequence from={SCENE_FRAME_BOUNDARIES[4]} durationInFrames={sceneDuration(4)}><DoctorScene config={config} /></Sequence><Sequence from={SCENE_FRAME_BOUNDARIES[5]} durationInFrames={sceneDuration(5)}><EvidenceScene config={config} /></Sequence>{config.showCaptions ? <CaptionLayer /> : null}<OptionalVoiceover voiceoverPath={config.voiceoverPath} volume={config.voiceoverVolume} /></AbsoluteFill>;
 };
