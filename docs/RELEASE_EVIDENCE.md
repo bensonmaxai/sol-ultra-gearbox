@@ -5,9 +5,9 @@ This file is generated from `docs/release-evidence.json`. Manual edits fail
 
 ## Deterministic checks
 
-- Generated: 2026-07-13T13:59:11.799Z
-- Source manifest: `2fb274dec401929096964b5730afd7d2a64f42969b75e9adfbd19128510f35eb` (38 files)
-- Tests: PASS (44/44)
+- Generated: 2026-07-13T14:28:05.437Z
+- Source manifest: `046a093de861e5b16037ac7e256ca18c610940f99fd0f4eafb6f5f4879d8aaa4` (38 files)
+- Tests: PASS (48/48)
 
 ## Runtime evidence
 
@@ -29,10 +29,22 @@ sanitized pass/fail summaries and immutable source identifiers.
 
 ## Real-work cost evidence
 
+- Observed typed child runtime: 15 sessions, 24 completed turns across 4 parent threads
+- Runtime metadata verified: 15/15; explicit `fork_turns=none`: 15/15; nested spawn sessions: 0
+- Policy-compliant sessions: 2/15; rejected: 13 (permission mismatch: 13; spawn override mismatch: 1)
+
+| Role | Actual model | Effort | Sessions | Completed turns | Child tokens | Policy compliant |
+|---|---|---|---:|---:|---:|---:|
+| `sol_reviewer` | `gpt-5.6-sol` | high | 6 | 13 | 10433652 | 0/6 |
+| `terra_explorer` | `gpt-5.6-terra` | medium | 7 | 8 | 3889951 | 0/7 |
+| `terra_worker` | `gpt-5.6-terra` | high | 2 | 3 | 7344884 | 2/2 |
+
+
 - Complete comparable pairs: 0/10
 - Eligible for a dated estimate: no
 - Estimator published: no
 
+Child-only runtime evidence is not a root-inclusive task cost or an A/B pair.
 Smoke tokens are excluded. No price or savings claim is published before ten
 accepted pairs of comparable real work exist.
 
