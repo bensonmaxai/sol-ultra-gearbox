@@ -132,9 +132,11 @@ npm run skill:install -- --apply
 ```
 
 The installer refuses an unmanaged target or a managed install whose files
-were changed locally. Updates preserve the previous directory as a sibling
-backup. Uninstall is also preview-only by default and renames the installation
-to a disabled directory instead of deleting it:
+were changed locally. Updates and uninstall preserve prior managed directories
+under `$CODEX_HOME/backups/skills/sol-ultra-gearbox/`, outside the active skill
+scan directory. The installer safely migrates legacy managed sibling backups;
+an unmanaged or locally modified legacy archive fails closed. Uninstall is also
+preview-only by default and archives the installation instead of deleting it:
 
 ```bash
 npm run skill:uninstall

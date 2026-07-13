@@ -16,7 +16,7 @@ Raw smoke reports remain local because they contain machine-specific paths.
 
 | Gate | Result |
 |---|---|
-| Node unit tests | 25 passed, 0 failed |
+| Node unit tests | 28 passed, 0 failed |
 | Gearbox doctor | PASS |
 | Global apply dry-run | PASS; config unchanged; managed AGENTS block would update |
 | Managed global apply | PASS; six-role smoke and fresh-root smoke passed |
@@ -66,6 +66,10 @@ forks, empty task messages, and unknown workflow skills fail closed.
 This is instruction-level policy plus static spawn-argument validation. It does
 not patch or intercept the Codex `spawn_agent` implementation, so the runtime
 smoke proves the observed typed paths rather than a universal tool hook.
+
+Managed skill backups and disabled installs are archived outside the active
+skill scan directory. Legacy managed sibling archives are migrated without
+deletion; unmanaged or locally modified lookalikes fail closed.
 
 ## Model-routing correction
 
