@@ -9,6 +9,7 @@ import {
   evidenceSourcePaths,
   finalizeReleaseEvidence,
   renderReleaseEvidence,
+  runtimeBindingComponentsMatch,
   validateReleaseEvidence,
 } from "../lib/release-evidence.mjs";
 
@@ -204,6 +205,29 @@ test("source manifest excludes generated evidence and raw reports", () => {
       "README.md",
     ]),
     ["README.md", "scripts/gearbox.mjs"],
+  );
+});
+
+test("release reuse compares runtime components without binding to docs-only commits", () => {
+  const base = {
+    codexVersion: "codex-cli 1.0.0",
+    configSha256: "a".repeat(64),
+    roleHashes: { terra_worker: "b".repeat(64) },
+    runtimeHashes: { "lib/gearbox.mjs": "c".repeat(64) },
+  };
+  assert.equal(
+    runtimeBindingComponentsMatch(
+      { ...base, git: { head: "1".repeat(40) } },
+      { ...base, git: { head: "2".repeat(40) } },
+    ),
+    true,
+  );
+  assert.equal(
+    runtimeBindingComponentsMatch(base, {
+      ...base,
+      runtimeHashes: { "lib/gearbox.mjs": "d".repeat(64) },
+    }),
+    false,
   );
 });
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { lstat, readFile, realpath } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -11,14 +13,16 @@ import {
   validateLedger,
   validateObservedUsageReport,
 } from "../lib/cost-evidence.mjs";
-import { atomicWrite, ROLE_SPECS, writeJson } from "../lib/gearbox.mjs";
+import { atomicWrite, ROLE_SPECS, sha256, writeJson } from "../lib/gearbox.mjs";
 import {
   createRepositorySourceManifest,
   finalizeReleaseEvidence,
   renderReleaseEvidence,
+  runtimeBindingComponentsMatch,
 } from "../lib/release-evidence.mjs";
 import { releaseCandidateFiles } from "../lib/release-check.mjs";
 import {
+  createRuntimeBinding,
   validateRoleSmokeEvidence,
   validateRuntimeBinding,
   validateSddAdapterEvidence,
@@ -30,6 +34,16 @@ const REPORTS_ROOT = join(REPO_ROOT, "reports");
 const JSON_PATH = join(REPO_ROOT, "docs", "release-evidence.json");
 const MARKDOWN_PATH = join(REPO_ROOT, "docs", "RELEASE_EVIDENCE.md");
 const EXPECTED_ROOT = Object.freeze({ model: "gpt-5.6-sol", effort: "max" });
+const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), ".codex");
+const APP_CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex";
+const CODEX_BIN =
+  process.env.CODEX_BIN ?? (existsSync(APP_CODEX_BIN) ? APP_CODEX_BIN : "codex");
+const RUNTIME_BINDING_PATHS = Object.freeze([
+  "lib/gearbox.mjs",
+  "lib/runtime-evidence.mjs",
+  "scripts/gearbox.mjs",
+  "scripts/codex-typed-agent",
+]);
 
 function runCommand(command, args, { cwd = REPO_ROOT } = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -87,7 +101,57 @@ async function readLocalReport(path, expectedName) {
   return JSON.parse(await readFile(actual, "utf8"));
 }
 
-function summarizeRoleSmoke(report, currentHead) {
+async function collectCurrentRuntimeBinding() {
+  const [head, status, version, config] = await Promise.all([
+    runCommand("git", ["rev-parse", "HEAD"]),
+    runCommand("git", ["status", "--porcelain=v1", "--untracked-files=all"]),
+    runCommand(CODEX_BIN, ["--version"]),
+    readFile(join(CODEX_HOME, "config.toml"), "utf8"),
+  ]);
+  if (head.code !== 0 || status.code !== 0 || version.code !== 0) {
+    throw new Error("Unable to collect current runtime binding");
+  }
+  const roleHashes = {};
+  for (const role of ROLE_SPECS) {
+    roleHashes[role.name] = sha256(await readFile(join(REPO_ROOT, "roles", role.sourceFile)));
+  }
+  const runtimeHashes = {};
+  for (const path of RUNTIME_BINDING_PATHS) {
+    runtimeHashes[path] = sha256(await readFile(join(REPO_ROOT, path)));
+  }
+  return createRuntimeBinding({
+    gitHead: head.stdout.trim(),
+    gitStatus: status.stdout,
+    codexVersion: version.stdout.trim().split(/\r?\n/).at(-1),
+    configSha256: sha256(config),
+    roleHashes,
+    runtimeHashes,
+  });
+}
+
+async function reportCommitIsAncestor(report, currentBinding) {
+  const sourceCommit = report?.runtimeBinding?.git?.head;
+  if (typeof sourceCommit !== "string") return false;
+  const result = await runCommand("git", [
+    "merge-base",
+    "--is-ancestor",
+    sourceCommit,
+    currentBinding.git.head,
+  ]);
+  return result.code === 0;
+}
+
+function runtimeEvidenceCompatible(report, currentBinding, commitIsAncestor) {
+  return (
+    validateRuntimeBinding(report?.runtimeBinding) &&
+    validateRuntimeBinding(currentBinding) &&
+    currentBinding.git.clean === true &&
+    commitIsAncestor === true &&
+    runtimeBindingComponentsMatch(report.runtimeBinding, currentBinding)
+  );
+}
+
+function summarizeRoleSmoke(report, currentBinding, commitIsAncestor) {
   const roles = Array.isArray(report?.roles) ? report.roles : [];
   const bindingValid = validateRuntimeBinding(report?.runtimeBinding);
   const roleEvidence = validateRoleSmokeEvidence(
@@ -99,7 +163,7 @@ function summarizeRoleSmoke(report, currentHead) {
     roleEvidence.pass &&
     bindingValid &&
     report.runtimeBinding.git.clean === true &&
-    report.runtimeBinding.git.head === currentHead &&
+    runtimeEvidenceCompatible(report, currentBinding, commitIsAncestor) &&
     report?.runtimeBindingStable === true &&
     report?.runtimeBindingAfterSha256 === report.runtimeBinding.sha256;
   if (!pass) throw new Error("Role smoke report is incomplete, stale, or not bound to current HEAD");
@@ -110,6 +174,7 @@ function summarizeRoleSmoke(report, currentHead) {
     passedRoleCount: roles.length,
     rootVerified: true,
     commit: report.runtimeBinding.git.head,
+    validatedAtCommit: currentBinding.git.head,
     runtimeBindingSha256: report.runtimeBinding.sha256,
     roles: roles.map((role) => ({
       role: role.role,
@@ -123,12 +188,12 @@ function summarizeRoleSmoke(report, currentHead) {
   };
 }
 
-function summarizeSddAdapter(report, currentHead) {
+function summarizeSddAdapter(report, currentBinding, commitIsAncestor) {
   const validation = validateSddAdapterEvidence(report);
   if (
     !validation.pass ||
     report.runtimeBinding.git.clean !== true ||
-    report.runtimeBinding.git.head !== currentHead
+    !runtimeEvidenceCompatible(report, currentBinding, commitIsAncestor)
   ) {
     throw new Error("SDD adapter report is incomplete, stale, or not bound to current HEAD");
   }
@@ -139,6 +204,7 @@ function summarizeSddAdapter(report, currentHead) {
     permissionStrategy: report.boundary?.permissionStrategy,
     verification: report.boundary?.verification,
     commit: report.runtimeBinding.git.head,
+    validatedAtCommit: currentBinding.git.head,
     runtimeBindingSha256: report.runtimeBinding.sha256,
   };
 }
@@ -216,7 +282,7 @@ async function main() {
     throw new Error("Release evidence generation requires a clean Git tree");
   }
   const currentHead = headResult.stdout.trim();
-  const [tests, smokeReport, sddReport, usageReport, costStatus] = await Promise.all([
+  const [tests, smokeReport, sddReport, usageReport, costStatus, currentBinding] = await Promise.all([
     runTests(),
     readLocalReport(optionValue(args, "--smoke"), "smoke.json"),
     readLocalReport(optionValue(args, "--sdd"), "sdd.json"),
@@ -224,6 +290,14 @@ async function main() {
     loadCostStatus(
       optionValue(args, "--cost-ledger") ?? join(REPORTS_ROOT, "cost-evidence.json"),
     ),
+    collectCurrentRuntimeBinding(),
+  ]);
+  if (currentBinding.git.head !== currentHead || currentBinding.git.clean !== true) {
+    throw new Error("Current runtime binding does not match the clean release HEAD");
+  }
+  const [smokeCommitIsAncestor, sddCommitIsAncestor] = await Promise.all([
+    reportCommitIsAncestor(smokeReport, currentBinding),
+    reportCommitIsAncestor(sddReport, currentBinding),
   ]);
   const statusAfterTests = await runCommand("git", [
     "status",
@@ -242,8 +316,8 @@ async function main() {
     source,
     tests,
     runtime: {
-      roleSmoke: summarizeRoleSmoke(smokeReport, currentHead),
-      sddAdapter: summarizeSddAdapter(sddReport, currentHead),
+      roleSmoke: summarizeRoleSmoke(smokeReport, currentBinding, smokeCommitIsAncestor),
+      sddAdapter: summarizeSddAdapter(sddReport, currentBinding, sddCommitIsAncestor),
     },
     costEvidence: {
       kind: "real_work",
