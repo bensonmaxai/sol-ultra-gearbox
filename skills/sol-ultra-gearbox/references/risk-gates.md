@@ -13,6 +13,7 @@ Use these gates in order. Stop at the first failure.
 | Lineage | One typed child, depth 1, no descendants | Extra spawn or missing parent-child link | Stop the smoke run |
 | Filesystem | Exact expected file diff | Unexpected write | Stop and preserve evidence |
 | Global immutability | Same config contents before and after one isolated smoke | Same-run global config changed | Fail and inspect owned entries |
+| Reusable smoke | Clean commit, matching config/Codex/role/runtime hashes, fixed TTL | Dirty tree, stale report, path escape, symlink, or any hash drift | Run a fresh approved smoke or stop |
 | Cost | Persisted parent and child token usage | Tokens inferred from prose or role | Do not claim savings |
 | Global apply | Explicit owner approval and all live roles pass | Any earlier gate failed | Do not modify `~/.codex` |
 | Skill install | Managed target and unchanged installed hashes | Unmanaged or locally edited target | Refuse overwrite |
@@ -29,8 +30,7 @@ schemas are captured per task and may differ after restart or upgrade.
 
 ## Cost interpretation
 
-Calculate the child-layer counterfactual separately from root orchestration.
-A multi-parent verification harness is intentionally more expensive than one
-production root coordinating several children. Label projections as estimates
-until comparable real tasks provide completion, latency, rework, and token
-evidence.
+Do not calculate savings from smoke runs. Store only sanitized accepted
+`real_work` evidence and require ten complete `sol_single`/`gearbox` pairs
+before even marking an estimate as eligible. Dated official pricing remains a
+separate later evaluation.

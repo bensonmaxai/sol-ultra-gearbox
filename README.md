@@ -56,6 +56,8 @@ automatic route or the default upgrade from `terra_worker`.
   config to have the same contents before and after the probe.
 - Remove owned temporary probe homes and fixtures after evidence extraction;
   treat cleanup failure as a smoke failure.
+- Bind paid runtime evidence to a clean Git commit, global config hash, Codex
+  version, every role hash, and the runner source hashes.
 - Stop after the first failed role. Do not retry a cost-bearing smoke test.
 - Back up and marker-manage every global write so rollback does not replace an
   unrelated complete config file.
@@ -76,6 +78,8 @@ compatibility gate that:
   verified typed roles;
 - preserves `fork_turns="none"` and role-owned model, effort, and sandbox
   settings;
+- refuses a child when the current parent permission mode does not match the
+  role sandbox;
 - batches compatible fan-out within the two-child and one-writer limits;
 - keeps security decisions, external side effects, and final adjudication on
   the Sol root;
@@ -159,6 +163,16 @@ metadata, marker, filesystem scope, no-descendant policy, and temporary-artifact
 cleanup. Raw reports are written under `reports/` and intentionally ignored by
 Git.
 
+The disposable SDD adapter contract is a separate paid probe:
+
+```bash
+npm run smoke:sdd
+```
+
+It runs `terra_worker` and `sol_reviewer` sequentially from isolated roots
+whose permission modes match each role. It verifies the write-to-review
+handoff; it is not a Codex core interception test.
+
 ## Promote and rollback global configuration
 
 Preview:
@@ -173,9 +187,20 @@ Apply only after explicit approval:
 node scripts/gearbox.mjs apply --promote-v2
 ```
 
-The apply command reruns all live role probes, writes marker-delimited changes,
-performs post-install checks, and automatically rolls back on failure. For a
-manual rollback, use the local manifest printed by the apply command:
+By default the apply command reruns all live role probes. To avoid immediately
+repeating a just-completed paid smoke, explicitly provide its local report:
+
+```bash
+node scripts/gearbox.mjs apply --promote-v2 \
+  --reuse-smoke reports/<run>/smoke.json
+```
+
+Reuse fails closed unless the report is under this repo's `reports/`, is a
+regular non-symlink file, is at most 30 minutes old, and exactly matches the
+current clean commit, config, Codex version, role files, and runtime sources.
+Apply writes marker-delimited changes, performs post-install checks, and
+automatically rolls back on failure. For a manual rollback, use the local
+manifest printed by the apply command:
 
 ```bash
 node scripts/gearbox.mjs rollback --manifest reports/<run>/install-manifest.json
@@ -186,6 +211,15 @@ the `agent_type` surface again in a fresh task.
 
 ## Publication checks
 
+After one current role smoke and SDD probe, generate both public evidence
+artifacts from their ignored local reports:
+
+```bash
+npm run release:evidence -- \
+  --smoke reports/<run>/smoke.json \
+  --sdd reports/<run>/sdd.json
+```
+
 ```bash
 npm test
 npm run release:check
@@ -193,9 +227,26 @@ gitleaks dir . --redact
 ```
 
 The release check excludes raw reports, rejects private home paths and common
-credential formats, validates the bundled skill metadata, and prevents
+credential formats, validates the bundled skill metadata, verifies the JSON
+and Markdown evidence against the current source manifest, and prevents
 accidental npm publication. CI runs the deterministic checks on every push and
 pull request.
+
+## Real-work cost evidence
+
+Smoke tokens are not a savings benchmark. Add only sanitized, accepted,
+comparable real work to the ignored ledger described in
+[docs/REAL_WORK_EVIDENCE.md](docs/REAL_WORK_EVIDENCE.md):
+
+```bash
+node scripts/cost-evidence.mjs status
+node scripts/cost-evidence.mjs add reports/cost-evidence.json record.json
+```
+
+Nine complete pairs remain ineligible. Ten pairs expose aggregate raw evidence
+and eligibility only; the repository still does not publish prices or a
+savings estimator. Any future estimate must use a separately dated official
+pricing source.
 
 ## License
 

@@ -4,9 +4,11 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rename,
   stat,
   symlink,
@@ -14,7 +16,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   AGENTS_MARKER,
@@ -39,6 +41,11 @@ import {
   verifyProbe,
   writeJson,
 } from "../lib/gearbox.mjs";
+import {
+  createRuntimeBinding,
+  validateSddAdapterEvidence,
+  validateTrustedSmoke,
+} from "../lib/runtime-evidence.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(SCRIPT_PATH), "..");
@@ -47,6 +54,12 @@ const SMOKE_ROOT = Object.freeze({ model: "gpt-5.6-sol", effort: "max" });
 const APP_CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex";
 const CODEX_BIN =
   process.env.CODEX_BIN ?? (existsSync(APP_CODEX_BIN) ? APP_CODEX_BIN : "codex");
+const RUNTIME_BINDING_PATHS = Object.freeze([
+  "lib/gearbox.mjs",
+  "lib/runtime-evidence.mjs",
+  "scripts/gearbox.mjs",
+  "scripts/codex-typed-agent",
+]);
 
 function timestamp() {
   return new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
@@ -129,6 +142,93 @@ function safeErrorSummary(output) {
     )
     .trim()
     .slice(-4000);
+}
+
+async function readBoundSource(path) {
+  const metadata = await lstat(path);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new Error(`Runtime binding refuses non-regular source: ${relative(REPO_ROOT, path)}`);
+  }
+  return readFile(path);
+}
+
+async function collectRuntimeBinding() {
+  const [headResult, statusResult, versionResult, configSource] = await Promise.all([
+    runCommand("git", ["rev-parse", "HEAD"]),
+    runCommand("git", ["status", "--porcelain=v1", "--untracked-files=all"]),
+    runCommand(CODEX_BIN, ["--version"]),
+    readFile(join(CODEX_HOME, "config.toml"), "utf8"),
+  ]);
+  if (headResult.code !== 0 || statusResult.code !== 0 || versionResult.code !== 0) {
+    throw new Error("Unable to collect a complete runtime binding");
+  }
+  const roleHashes = {};
+  for (const spec of ROLE_SPECS) {
+    roleHashes[spec.name] = sha256(await readBoundSource(rolePath(spec)));
+  }
+  const runtimeHashes = {};
+  for (const path of RUNTIME_BINDING_PATHS) {
+    runtimeHashes[path] = sha256(
+      await readBoundSource(join(REPO_ROOT, path)),
+    );
+  }
+  return createRuntimeBinding({
+    gitHead: headResult.stdout.trim(),
+    gitStatus: statusResult.stdout,
+    codexVersion: versionResult.stdout.trim().split(/\r?\n/).at(-1),
+    configSha256: sha256(configSource),
+    roleHashes,
+    runtimeHashes,
+  });
+}
+
+async function loadTrustedSmoke(reportPath) {
+  const reportsPath = join(REPO_ROOT, "reports");
+  const reportsMetadata = await lstat(reportsPath);
+  if (!reportsMetadata.isDirectory() || reportsMetadata.isSymbolicLink()) {
+    throw new Error("Repository reports directory must be a real directory");
+  }
+  const reportsRoot = await realpath(reportsPath);
+  const requestedPath = resolve(reportPath);
+  const metadata = await lstat(requestedPath);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new Error("Trusted smoke path must be a regular non-symlink file");
+  }
+  const actualPath = await realpath(requestedPath);
+  const pathFromReports = relative(reportsRoot, actualPath);
+  if (
+    pathFromReports === "" ||
+    pathFromReports === ".." ||
+    pathFromReports.startsWith(`..${sep}`) ||
+    resolve(reportsRoot, pathFromReports) !== actualPath
+  ) {
+    throw new Error("Trusted smoke path must remain under this repository's reports directory");
+  }
+  const report = JSON.parse(await readFile(actualPath, "utf8"));
+  const currentBinding = await collectRuntimeBinding();
+  const validation = validateTrustedSmoke({
+    report,
+    currentBinding,
+    expectedRoles: ROLE_SPECS.filter((role) => role.smoke),
+    expectedRoot: SMOKE_ROOT,
+  });
+  if (!validation.pass) {
+    const failed = Object.entries(validation.checks)
+      .filter(([, pass]) => !pass)
+      .map(([name]) => name)
+      .join(", ");
+    throw new Error(`Trusted smoke reuse rejected: ${failed}`);
+  }
+  return {
+    ...report,
+    reportDirectory: dirname(actualPath),
+    reuse: {
+      mode: "trusted_recent_smoke",
+      validatedAt: new Date().toISOString(),
+      ageMs: validation.ageMs,
+      ttlMs: validation.ttlMs,
+    },
+  };
 }
 
 async function runDoctor() {
@@ -441,6 +541,272 @@ async function runRoleProbe(spec) {
   return result;
 }
 
+async function runSddTypedPhase({ spec, cwd, task, marker, filesystemCheck }) {
+  const before = await hashTree(cwd);
+  const probeHome = await mkdtemp(
+    join(tmpdir(), `sol-ultra-gearbox-v2-home-${spec.name}-`),
+  );
+  const authLink = join(probeHome, "auth.json");
+  await symlink(join(CODEX_HOME, "auth.json"), authLink);
+  const startedAt = new Date().toISOString();
+  const startedAtMs = Date.now();
+  const parentPrompt = [
+    "This is one permission-matched phase of an explicitly authorized disposable SDD adapter verification.",
+    `Call spawn_agent exactly once with agent_type=\"${spec.name}\", task_name=\"sdd_${spec.name}\", fork_turns=\"none\", and the self-contained message below.`,
+    "Do not pass model, reasoning_effort, model_reasoning_effort, or service_tier.",
+    "Wait for the child, close it, and return the child result. Do not spawn any other agent.",
+    `Child message: ${task}`,
+  ].join("\n");
+  const args = [
+    "--strict-config",
+    "-c",
+    "features.multi_agent_v2.enabled=true",
+    "-c",
+    "features.multi_agent_v2.max_concurrent_threads_per_session=2",
+    "-c",
+    "features.multi_agent_v2.hide_spawn_agent_metadata=false",
+    "-c",
+    'features.multi_agent_v2.tool_namespace="agents"',
+    "-c",
+    "agents.max_depth=1",
+    "-c",
+    `agents.${spec.name}.description=${JSON.stringify(spec.description)}`,
+    "-c",
+    `agents.${spec.name}.config_file=${JSON.stringify(rolePath(spec))}`,
+    "-c",
+    `model=${JSON.stringify(SMOKE_ROOT.model)}`,
+    "-c",
+    `model_reasoning_effort=${JSON.stringify(SMOKE_ROOT.effort)}`,
+    "-c",
+    'plugins."superpowers@openai-curated".enabled=false',
+    "-s",
+    spec.sandbox,
+    "-a",
+    "never",
+    "-C",
+    cwd,
+    "exec",
+    "--json",
+    "--skip-git-repo-check",
+    "--ignore-user-config",
+    parentPrompt,
+  ];
+  let execution;
+  let rollouts;
+  try {
+    execution = await runCommand(CODEX_BIN, args, {
+      cwd,
+      timeoutMs: 900_000,
+      env: { CODEX_HOME: probeHome },
+    });
+    rollouts = await locateProbeRollouts({
+      sessionRoot: join(probeHome, "sessions"),
+      cwd,
+      sinceMs: startedAtMs,
+    });
+  } finally {
+    await unlink(authLink).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+  const verification = verifyProbe({
+    spec,
+    parent: rollouts.parent,
+    child: rollouts.child,
+    marker,
+    parentExpected: SMOKE_ROOT,
+  });
+  const after = await hashTree(cwd);
+  const changedFiles = treeDiff(before, after);
+  const runtimeChecks = {
+    commandExitedZero: execution.code === 0,
+    commandDidNotTimeout: !execution.timedOut,
+    noReservedSchemaMismatch: !/reserved .*schema mismatch|HTTP 400/i.test(
+      `${execution.stdout}\n${execution.stderr}`,
+    ),
+    filesystemScope: await filesystemCheck({ cwd, changedFiles, before, after }),
+  };
+  const errorSummary =
+    execution.code === 0 ? "" : safeErrorSummary(execution.stderr);
+  if (errorSummary) {
+    process.stderr.write(`SDD_COMMAND_ERROR ${spec.name}\n${errorSummary}\n`);
+  }
+  const result = {
+    ...verification,
+    pass: verification.pass && Object.values(runtimeChecks).every(Boolean),
+    startedAt,
+    completedAt: new Date().toISOString(),
+    runtimeChecks,
+    fixture: cwd,
+    changedFiles,
+    command: {
+      exitCode: execution.code,
+      timedOut: execution.timedOut,
+      schemaMismatch: /reserved .*schema mismatch|HTTP 400/i.test(
+        `${execution.stdout}\n${execution.stderr}`,
+      ),
+      errorSummary,
+    },
+  };
+  try {
+    result.cleanup = {
+      pass: true,
+      ...(await cleanupProbeArtifacts([probeHome])),
+    };
+  } catch (error) {
+    result.cleanup = {
+      pass: false,
+      errorSummary: safeErrorSummary(error.message),
+    };
+  }
+  result.runtimeChecks.temporaryArtifactsCleaned = result.cleanup.pass;
+  result.pass = result.pass && result.cleanup.pass;
+  result.completedAt = new Date().toISOString();
+  return result;
+}
+
+function sddMarkdown(report) {
+  const rows = report.phases
+    .map(
+      (phase) =>
+        `| ${phase.role} | ${phase.pass ? "PASS" : "FAIL"} | ${phase.actual?.model ?? "n/a"} | ${phase.actual?.effort ?? "n/a"} | ${phase.actual?.sandbox ?? "n/a"} |`,
+    )
+    .join("\n");
+  return `# SDD Adapter Contract Probe\n\n- Generated: ${report.generatedAt}\n- Status: ${report.pass ? "PASS" : "FAIL"}\n- Execution: sequential permission-matched disposable phases\n- Global config unchanged: ${report.globalConfigUnchanged ? "yes" : "no"}\n- Codex core hook tested: no\n\n| Phase role | Status | Actual model | Effort | Sandbox |\n|---|---|---|---|---|\n${rows}\n`;
+}
+
+async function runSddAdapterProbe({ writeReport = true } = {}) {
+  const runtimeBinding = await collectRuntimeBinding();
+  if (!runtimeBinding.git.clean) {
+    throw new Error(
+      "Paid SDD adapter probe requires a clean Git tree so its evidence is immutable",
+    );
+  }
+  const globalConfigPath = join(CODEX_HOME, "config.toml");
+  const globalConfigBefore = await readOptional(globalConfigPath);
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-sdd-"));
+  const workerCwd = join(fixtureRoot, "worker");
+  const reviewerCwd = join(fixtureRoot, "reviewer");
+  await mkdir(workerCwd, { recursive: true });
+  await writeFile(join(workerCwd, "worker-target.txt"), "BEFORE\n", "utf8");
+
+  const phases = [];
+  let workerResult = null;
+  let reviewerResult = null;
+  let cleanup = { pass: false };
+  try {
+    const workerSpec = ROLE_SPECS.find((spec) => spec.name === "terra_worker");
+    const workerMarker = "SDD_WORKER_OK:AFTER";
+    workerResult = await runSddTypedPhase({
+      spec: workerSpec,
+      cwd: workerCwd,
+      task: [
+        "This is the bounded implementer phase of a disposable subagent-driven-development adapter contract.",
+        "Use apply_patch to change only worker-target.txt from BEFORE to AFTER.",
+        "Verify the exact final content, do not touch any other file, and do not spawn another agent.",
+        `Return ${workerMarker} in the final response.`,
+      ].join(" "),
+      marker: workerMarker,
+      filesystemCheck: async ({ cwd, changedFiles }) =>
+        changedFiles.length === 1 &&
+        changedFiles[0] === "worker-target.txt" &&
+        (await readFile(join(cwd, "worker-target.txt"), "utf8")) === "AFTER\n",
+    });
+    phases.push(workerResult);
+
+    if (workerResult.pass) {
+      await mkdir(reviewerCwd, { recursive: true });
+      const finalState = await readFile(join(workerCwd, "worker-target.txt"), "utf8");
+      await writeFile(join(reviewerCwd, "review.diff"), "-BEFORE\n+AFTER\n", "utf8");
+      await writeFile(join(reviewerCwd, "final-state.txt"), finalState, "utf8");
+      await writeFile(
+        join(reviewerCwd, "acceptance.txt"),
+        "Only worker-target.txt changes from BEFORE to AFTER.\n",
+        "utf8",
+      );
+      const reviewerSpec = ROLE_SPECS.find((spec) => spec.name === "sol_reviewer");
+      const reviewerMarker = "SDD_REVIEW_OK:AFTER";
+      reviewerResult = await runSddTypedPhase({
+        spec: reviewerSpec,
+        cwd: reviewerCwd,
+        task: [
+          "This is the read-only task-review phase of a disposable subagent-driven-development adapter contract.",
+          "Read acceptance.txt, review.diff, and final-state.txt.",
+          "Confirm the diff matches the acceptance contract and the final state is exactly AFTER.",
+          "Do not edit or create files and do not spawn another agent.",
+          `Return ${reviewerMarker} in the final response.`,
+        ].join(" "),
+        marker: reviewerMarker,
+        filesystemCheck: async ({ changedFiles }) => changedFiles.length === 0,
+      });
+      phases.push(reviewerResult);
+    }
+  } finally {
+    try {
+      cleanup = {
+        pass: true,
+        ...(await cleanupProbeArtifacts([fixtureRoot])),
+      };
+    } catch (error) {
+      cleanup = { pass: false, errorSummary: safeErrorSummary(error.message) };
+    }
+  }
+
+  const globalConfigAfter = await readOptional(globalConfigPath);
+  const runtimeBindingAfter = await collectRuntimeBinding();
+  const sequenceChecks = {
+    workerCompletedBeforeReview:
+      Boolean(workerResult?.completedAt) &&
+      Boolean(reviewerResult?.startedAt) &&
+      Date.parse(workerResult.completedAt) <= Date.parse(reviewerResult.startedAt),
+    workerChangedOnlyTarget: workerResult?.runtimeChecks?.filesystemScope === true,
+    reviewerObservedFinalState: reviewerResult?.checks?.markerReturned === true,
+    reviewerChangedNoFiles:
+      reviewerResult?.runtimeChecks?.filesystemScope === true &&
+      reviewerResult?.changedFiles?.length === 0,
+  };
+  const report = {
+    schemaVersion: 1,
+    kind: "sdd_adapter_contract",
+    generatedAt: new Date().toISOString(),
+    pass:
+      phases.length === 2 &&
+      phases.every((phase) => phase.pass) &&
+      Object.values(sequenceChecks).every(Boolean) &&
+      globalConfigAfter === globalConfigBefore &&
+      runtimeBinding.sha256 === runtimeBindingAfter.sha256 &&
+      cleanup.pass,
+    globalConfigUnchanged: globalConfigAfter === globalConfigBefore,
+    globalConfigBeforeSha256:
+      globalConfigBefore === null ? null : sha256(globalConfigBefore),
+    globalConfigAfterSha256:
+      globalConfigAfter === null ? null : sha256(globalConfigAfter),
+    runtimeBinding,
+    runtimeBindingAfterSha256: runtimeBindingAfter.sha256,
+    runtimeBindingStable: runtimeBinding.sha256 === runtimeBindingAfter.sha256,
+    phases,
+    sequenceChecks,
+    cleanup,
+    boundary: {
+      workflow: "superpowers:subagent-driven-development",
+      verification: "adapter_contract",
+      codexCoreHookTested: false,
+      permissionStrategy: "sequential_isolated_roots",
+    },
+  };
+  const validation = validateSddAdapterEvidence(report);
+  report.pass = report.pass && validation.pass;
+  report.validationChecks = validation.checks;
+  if (writeReport) {
+    const directory = join(REPO_ROOT, "reports", `${timestamp()}-sdd`);
+    await mkdir(directory, { recursive: true });
+    await writeJson(join(directory, "sdd.json"), report);
+    await atomicWrite(join(directory, "sdd.md"), sddMarkdown(report));
+    report.reportDirectory = directory;
+  }
+  return report;
+}
+
 function smokeMarkdown(report) {
   const rows = report.roles
     .map((item) => {
@@ -453,6 +819,12 @@ function smokeMarkdown(report) {
 }
 
 async function runSmokeAll({ writeReport = true } = {}) {
+  const runtimeBinding = await collectRuntimeBinding();
+  if (!runtimeBinding.git.clean) {
+    throw new Error(
+      "Paid smoke requires a clean Git tree so its evidence can be bound and reused",
+    );
+  }
   const globalConfigPath = join(CODEX_HOME, "config.toml");
   const globalConfigBefore = await readOptional(globalConfigPath);
   const roles = [];
@@ -464,17 +836,21 @@ async function runSmokeAll({ writeReport = true } = {}) {
     if (!result.pass) break;
   }
   const globalConfigAfter = await readOptional(globalConfigPath);
+  const runtimeBindingAfter = await collectRuntimeBinding();
   const globalConfigUnchanged = globalConfigAfter === globalConfigBefore;
+  const runtimeBindingStable =
+    runtimeBinding.sha256 === runtimeBindingAfter.sha256;
   if (!globalConfigUnchanged) {
     process.stdout.write("SMOKE_FAIL global_config_changed\n");
   }
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     pass:
       roles.length === ROLE_SPECS.filter((role) => role.smoke).length &&
       roles.every((item) => item.pass) &&
-      globalConfigUnchanged,
+      globalConfigUnchanged &&
+      runtimeBindingStable,
     expectedRoleCount: ROLE_SPECS.filter((role) => role.smoke).length,
     rootRuntime: {
       model: SMOKE_ROOT.model,
@@ -492,6 +868,9 @@ async function runSmokeAll({ writeReport = true } = {}) {
       globalConfigBefore === null ? null : sha256(globalConfigBefore),
     globalConfigAfterSha256:
       globalConfigAfter === null ? null : sha256(globalConfigAfter),
+    runtimeBinding,
+    runtimeBindingAfterSha256: runtimeBindingAfter.sha256,
+    runtimeBindingStable,
     roles,
   };
   if (writeReport) {
@@ -632,6 +1011,7 @@ async function installAfterSmoke(smoke) {
     generatedAt: new Date().toISOString(),
     status: "applying",
     smokeReportDirectory: smoke.reportDirectory ?? null,
+    smokeEvidence: smoke.reuse ?? { mode: "fresh_smoke" },
     config: {
       path: configPath,
       beforeSha256: sha256(configSource),
@@ -692,7 +1072,7 @@ async function installAfterSmoke(smoke) {
     await writeJson(manifestPath, manifest);
     await atomicWrite(
       join(reportDirectory, "result.md"),
-      `# Gearbox V2 Apply Result\n\n- Status: PASS\n- Manifest: ${manifestPath}\n- ${smoke.expectedRoleCount}-role smoke: PASS\n- Root runtime: ${smoke.rootRuntime.model} / ${smoke.rootRuntime.effort} (${smoke.rootRuntime.verified ? "verified" : "unverified"})\n- Post-install fresh-root smoke: PASS\n- Current tasks retain their original tool schema; restart Codex and open a new task.\n`,
+      `# Gearbox V2 Apply Result\n\n- Status: PASS\n- Manifest: ${manifestPath}\n- ${smoke.expectedRoleCount}-role smoke: PASS (${smoke.reuse ? "trusted recent evidence reused" : "fresh"})\n- Root runtime: ${smoke.rootRuntime.model} / ${smoke.rootRuntime.effort} (${smoke.rootRuntime.verified ? "verified" : "unverified"})\n- Post-install fresh-root smoke: PASS\n- Current tasks retain their original tool schema; restart Codex and open a new task.\n`,
     );
     return { manifestPath, manifest };
   } catch (error) {
@@ -790,7 +1170,8 @@ function usage() {
   process.stderr.write(`Usage:
   node scripts/gearbox.mjs doctor [--json]
   node scripts/gearbox.mjs smoke --all
-  node scripts/gearbox.mjs apply --promote-v2 [--dry-run]
+  node scripts/gearbox.mjs smoke-sdd
+  node scripts/gearbox.mjs apply --promote-v2 [--dry-run] [--reuse-smoke <reports/.../smoke.json>]
   node scripts/gearbox.mjs cleanup-smoke-projects --manifest <path>
   node scripts/gearbox.mjs rollback --manifest <path> [--force]
 `);
@@ -827,6 +1208,14 @@ async function main() {
     return;
   }
 
+  if (command === "smoke-sdd") {
+    const report = await runSddAdapterProbe();
+    process.stdout.write(`GEARBOX_SDD_${report.pass ? "PASS" : "FAIL"}\n`);
+    process.stdout.write(`REPORT ${report.reportDirectory}\n`);
+    if (!report.pass) process.exitCode = 1;
+    return;
+  }
+
   if (command === "apply") {
     if (!args.includes("--promote-v2")) {
       throw new Error("apply requires --promote-v2");
@@ -839,7 +1228,13 @@ async function main() {
     }
     const doctor = await runDoctor();
     if (!doctor.pass) throw new Error("Preflight doctor failed");
-    const smoke = await runSmokeAll();
+    const reuseSmokePath = optionValue(args, "--reuse-smoke");
+    if (args.includes("--reuse-smoke") && !reuseSmokePath) {
+      throw new Error("--reuse-smoke requires a report path");
+    }
+    const smoke = reuseSmokePath
+      ? await loadTrustedSmoke(reuseSmokePath)
+      : await runSmokeAll();
     if (!smoke.pass) {
       throw new Error(
         `${smoke.expectedRoleCount}-role smoke failed; global config was not changed. Report: ${smoke.reportDirectory}`,

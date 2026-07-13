@@ -93,6 +93,9 @@ actual child spawn, apply the compatibility gate:
 - preserve the workflow's semantics without inheriting its generic model or
   agent defaults;
 - batch compatible independent work within the two-child limit;
+- require each parent permission mode to match the selected child sandbox; a
+  workspace-write parent must not launch the read-only reviewer merely to keep
+  an adapter shape intact;
 - keep external side effects, security findings, and final adjudication on the
   Sol root;
 - fail closed for an unknown skill or an unresolvable conflict instead of
@@ -107,7 +110,9 @@ does not trigger the gate; an actual delegation intent does.
 ## Run live verification
 
 Run `npm run smoke` only after explicit owner approval because it consumes
-model credits. Stop on the first failure and do not retry automatically.
+model credits. The runner requires a clean Git tree and binds the evidence to
+the commit, global config hash, Codex version, role hashes, and runtime source
+hashes. Stop on the first failure and do not retry automatically.
 
 Require persisted evidence for:
 
@@ -119,6 +124,11 @@ Require persisted evidence for:
 - exact filesystem scope and expected marker;
 - identical global config contents before and after the isolated probe.
 
+Use `npm run smoke:sdd` for the disposable SDD adapter contract. It runs the
+write worker and read-only reviewer as sequential permission-matched phases,
+verifies the artifact handoff, and does not claim to exercise a Codex core
+hook.
+
 Mark missing runtime metadata as `unverified`; never infer cost savings from a
 role name or prose response.
 
@@ -126,7 +136,9 @@ role name or prose response.
 
 Preview global configuration with the dry-run command. Run
 `node scripts/gearbox.mjs apply --promote-v2` only with explicit owner approval
-and only after all live roles pass. Preserve the emitted manifest.
+and only after all live roles pass. An explicit `--reuse-smoke` report may
+avoid a duplicate paid run only when the fixed-TTL binding validator accepts
+the recent local evidence. Preserve the emitted manifest.
 
 If post-install validation fails, require automatic rollback. For a later
 manual rollback, use the exact manifest path and avoid `--force` unless the
@@ -138,9 +150,15 @@ the managed command; it disables the folder instead of deleting it.
 
 ## Prepare a public release
 
-Run unit tests, `npm run release:check`, the official skill validator when
-available, and a local secret scanner. Keep raw reports, auth state, complete
-user config, rollout contents, and private filesystem paths out of Git.
+Generate the paired machine-readable and Markdown evidence with
+`npm run release:evidence -- --smoke <path> --sdd <path>`, then run unit tests,
+`npm run release:check`, the official skill validator when available, and a
+local secret scanner. Keep raw reports, auth state, complete user config,
+rollout contents, and private filesystem paths out of Git.
+
+Use the real-work ledger for comparable accepted tasks only. Smoke evidence is
+rejected, and no estimator or savings claim is allowed before ten complete
+`sol_single`/`gearbox` pairs.
 
 ## Report the result
 

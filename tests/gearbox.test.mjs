@@ -164,6 +164,8 @@ test("managed policy gates skill-driven delegation and unknown skills", () => {
   assert.match(WORKFLOW_POLICY, /general-purpose/);
   assert.match(WORKFLOW_POLICY, /不得.*靜默.*改寫/);
   assert.match(WORKFLOW_POLICY, /非-Ultra root 下依序建立單一 typed child/);
+  assert.match(WORKFLOW_POLICY, /parent permission.*read-only/);
+  assert.match(WORKFLOW_POLICY, /Sol root 自行 task review/);
 });
 
 test("typed spawn validation rejects generic, untyped, and overridden children", () => {
@@ -238,6 +240,7 @@ test("cleanupProbeArtifacts removes only owned temporary directories", async (t)
   const owned = await Promise.all([
     mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-luna_clerk-")),
     mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-terra_max_worker-")),
+    mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-sdd-")),
   ]);
   const unrelated = await mkdtemp(join(tmpdir(), "unrelated-probe-"));
   t.after(() => rm(unrelated, { recursive: true, force: true }));
@@ -248,7 +251,7 @@ test("cleanupProbeArtifacts removes only owned temporary directories", async (t)
   );
 
   const result = await cleanupProbeArtifacts(owned);
-  assert.equal(result.removed.length, 2);
+  assert.equal(result.removed.length, 3);
   for (const path of owned) await assert.rejects(stat(path), /ENOENT/);
   await assert.rejects(
     cleanupProbeArtifacts([unrelated]),

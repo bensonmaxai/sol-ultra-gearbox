@@ -52,7 +52,7 @@ generic worker.
 
 | Workflow skill | Adapter | Fail-closed boundary |
 |---|---|---|
-| `superpowers:subagent-driven-development` | Sol root owns the plan and progress ledger. Dispatch a fresh `terra_worker` implementer or fixer, then a read-only `sol_reviewer` task reviewer. Put the required TDD and test contract in the self-contained brief because child workflow plugins remain disabled. Writers remain sequential. Sol root integrates and performs final adjudication. | Do not pass the workflow's explicit model override. If the task cannot fit an exclusive write scope or requires a generic final-review child, keep it on the Sol root. |
+| `superpowers:subagent-driven-development` | Sol root owns the plan and progress ledger. Dispatch a fresh `terra_worker` implementer or fixer. Use `sol_reviewer` only in a later parent phase whose permission mode matches read-only; otherwise the Sol root performs task review. Put the required TDD and test contract in the self-contained brief because child workflow plugins remain disabled. Writers remain sequential. Sol root integrates and performs final adjudication. | Do not pass the workflow's explicit model override. Never launch the read-only reviewer from a broader workspace-write parent. If permission switching, exclusive write scope, or a typed final review cannot be preserved, keep that phase on the Sol root. |
 | `superpowers:dispatching-parallel-agents` | Translate each independent responsibility to a typed role and run at most two direct children per batch. Prefer read-only evidence batches before a separate writer round. | Do not use generic agents, overlapping writers, shared mutable state, or nested dispatch. |
 | `superpowers:requesting-code-review` | Send exact requirements, diff, and existing test evidence to `sol_reviewer`. Route accepted fixes separately to one `terra_worker` or keep them on the Sol root. | The reviewer never edits, reimplements, or reruns the whole task without a concrete reason. |
 | `codex-security:security-scan` | Use `terra_explorer` for ranking and evidence collection, then `sol_reviewer` for bounded validation, attack-path, or security-boundary review. Run no more than two direct children per batch. Sol root owns finding decisions and write-ups. | No Terra child owns security decisions or writes security fixes. Unknown validation permissions, descendant agents, or more than two required concurrent workers fail closed. |
@@ -95,3 +95,9 @@ layer. Therefore:
 - static tests prove the policy and validator are present;
 - runtime smoke proves observed typed role identity and lineage;
 - neither should be described as a universal tool-runtime hook.
+
+The disposable `smoke:sdd` harness verifies the adapter contract through two
+sequential isolated root phases so each child receives the exact required
+sandbox. It proves typed runtime identity, handoff order, and filesystem scope;
+it does not prove that arbitrary third-party skill code is intercepted below
+the instruction layer.
