@@ -12,6 +12,8 @@ public/generated/fail-closed-background.png
 public/generated/rollback-background.png
 ```
 
+The reproducible still-image requests are under `prompts/keyframes/`. They are separate from the motion-only xAI requests under `prompts/xai/`.
+
 The three background media settings are enabled by default. xAI clips stay disabled through each scene's `videoEnabled: false`, so a missing MP4 is never requested. After a clip has been generated and reviewed, set only that scene's `videoEnabled` flag to `true`.
 
 The committed configuration uses the actual VHS capture during 29–38s. Run `npm run record:doctor` to create `public/generated/doctor-dry-run.mp4`; its deterministic `playbackRate: 3` fits both command PASS summaries inside the nine-second Doctor scene. If the recording is intentionally unavailable, set `media.doctor.enabled` to `false` to use the code-native fallback.
@@ -34,4 +36,4 @@ Both MP4 commands use H.264 with `yuv420p`. `copy:social` copies the bilingual a
 
 `npm run xai:dry-run` runs three real local validations through the xAI helper with `--dry-run`; it does not call xAI or create a billable job. It uses `XAI_VIDEO_SCRIPT` when supplied, otherwise resolves the helper below `${CODEX_HOME:-$HOME/.codex}`. Live image-to-video generation is billable and still requires explicit owner authorization; no automatic retry is configured.
 
-The safe VHS tape is `tapes/doctor-dry-run.tape`; `npm run record:doctor` starts VHS from the repository root and writes `public/generated/doctor-dry-run.mp4`. It advances only after seeing the expected six-role doctor result and the non-mutating apply dry-run result, both reduced through jq, and never runs the paid smoke command. On macOS installations where ttyd starts more slowly than VHS 0.11.0 expects, use a VHS build with a ttyd-readiness wait; the tape itself is unchanged.
+The safe VHS tape is `tapes/doctor-dry-run.tape`; `npm run record:doctor` starts VHS from the repository root and writes `public/generated/doctor-dry-run.mp4`. Dedicated jq gates emit unique PASS sentinels only when every required value matches; missing or false fields stop the tape. The tested VHS 0.11.0 Bash profile uses `--noprofile`, `--norc`, disabled history, and a fixed `>` prompt, but the rendered frames must still be checked for private paths, username, and hostname before publication. The tape never runs the paid smoke command. On macOS installations where ttyd starts more slowly than VHS 0.11.0 expects, use a VHS build with a ttyd-readiness wait; the tape itself is unchanged.

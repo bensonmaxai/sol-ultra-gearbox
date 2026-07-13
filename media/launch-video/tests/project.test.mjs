@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import test from "node:test";
 
 const projectRoot = resolve(import.meta.dirname, "..");
+const repositoryRoot = resolve(projectRoot, "../..");
 const read = (relativePath) => readFile(join(projectRoot, relativePath), "utf8");
 
 const toMs = (timestamp) => {
@@ -97,6 +99,15 @@ test("caption safe area and required evidence are deterministic", async () => {
   assert.doesNotMatch(video, /animation\s*:|transition\s*:/);
 });
 
+test("public release claims remain backed by sanitized persisted evidence", async () => {
+  const evidence = await readFile(join(repositoryRoot, "docs/RELEASE_EVIDENCE.md"), "utf8");
+  assert.match(evidence, /Node unit tests \| 23 passed, 0 failed/);
+  assert.match(evidence, /Cost-bearing six-role smoke/);
+  assert.match(evidence, /persisted lineage, exact parent and child runtime\s+identity/);
+  assert.match(evidence, /global config contents were identical\s+before and after the isolated smoke/);
+  assert.doesNotMatch(evidence, /\/Users\//);
+});
+
 test("optional media uses approved PNGs without requesting missing videos and keeps Doctor fallback", async () => {
   const config = await read("src/data/config.ts");
   const media = await read("src/components/OptionalMedia.tsx");
@@ -120,10 +131,43 @@ test("VHS recording runs from the repository root and writes the package-local M
   assert.equal(packageJson.scripts["record:doctor"], "cd ../.. && vhs media/launch-video/tapes/doctor-dry-run.tape");
   assert.match(tape, /^Output media\/launch-video\/public\/generated\/doctor-dry-run\.mp4/m);
   assert.match(tape, /Set TypingSpeed 1ms/);
+  assert.match(tape, /Set Shell "bash"/);
   assert.match(tape, /npm run --silent doctor/);
-  assert.match(tape, /Wait\+Screen \/"roleCount": 6\//);
-  assert.match(tape, /Wait\+Screen \/"secretsCopiedToReport": false\//);
-  assert.match(tape, /secretsCopiedToReport/);
+  assert.match(tape, /Wait\+Screen \/GEARBOX_DOCTOR_PASS\//);
+  assert.match(tape, /Wait\+Screen \/GEARBOX_DRY_RUN_PASS\//);
+  assert.doesNotMatch(tape, /raw reports|config\.toml|\/Users\//);
+});
+
+test("VHS jq gates fail closed and emit sentinels only for complete PASS data", () => {
+  const runGate = (filter, input) => spawnSync("jq", ["-c", "-f", join(projectRoot, filter)], {
+    input: JSON.stringify(input),
+    encoding: "utf8",
+  });
+  const validDoctor = { pass: true, roleChecks: Array.from({ length: 6 }, (_, index) => ({ role: index })) };
+  const validDryRun = { pass: true, changes: { config: { changed: false }, agents: { changed: true }, installedRoleCount: 6, secretsCopiedToReport: false } };
+  const doctorPass = runGate("tapes/jq/doctor-pass.jq", validDoctor);
+  const dryRunPass = runGate("tapes/jq/apply-dry-run-pass.jq", validDryRun);
+  assert.equal(doctorPass.status, 0);
+  assert.match(doctorPass.stdout, /GEARBOX_DOCTOR_PASS/);
+  assert.equal(dryRunPass.status, 0);
+  assert.match(dryRunPass.stdout, /GEARBOX_DRY_RUN_PASS/);
+  for (const invalidDoctor of [{ ...validDoctor, pass: false }, { pass: true, roleChecks: validDoctor.roleChecks.slice(0, 5) }, { pass: true }]) {
+    const result = runGate("tapes/jq/doctor-pass.jq", invalidDoctor);
+    assert.notEqual(result.status, 0);
+    assert.doesNotMatch(result.stdout, /GEARBOX_DOCTOR_PASS/);
+  }
+  for (const invalidDryRun of [
+    { ...validDryRun, pass: false },
+    { ...validDryRun, changes: { ...validDryRun.changes, config: {} } },
+    { ...validDryRun, changes: { ...validDryRun.changes, agents: { changed: "yes" } } },
+    { ...validDryRun, changes: { ...validDryRun.changes, installedRoleCount: 5 } },
+    { ...validDryRun, changes: { ...validDryRun.changes, secretsCopiedToReport: true } },
+    { pass: true, changes: {} },
+  ]) {
+    const result = runGate("tapes/jq/apply-dry-run-pass.jq", invalidDryRun);
+    assert.notEqual(result.status, 0);
+    assert.doesNotMatch(result.stdout, /GEARBOX_DRY_RUN_PASS/);
+  }
 });
 
 test("xAI dry-run script maps all approved PNGs to local-only request validation", async () => {
@@ -139,6 +183,36 @@ test("xAI dry-run script maps all approved PNGs to local-only request validation
   for (const flag of ["--duration 4", "--aspect-ratio 9:16", "--resolution 720p", "--out", "--manifest", "--dry-run"]) assert.ok(script.includes(flag));
   assert.match(script, /\$\{CODEX_HOME:-\$HOME\/.codex\}/);
   assert.doesNotMatch(script, /\/Users\//);
+});
+
+test("owner-review keyframes have separate reproducible still-image prompts", async () => {
+  for (const prompt of ["01-routing-data-streams.md", "02-fail-closed-gate.md", "03-rollback-clean-state.md"]) {
+    const source = await read(`prompts/keyframes/${prompt}`);
+    assert.match(source, /vertical 9:16/);
+    assert.match(source, /No text/);
+    assert.doesNotMatch(source, /4-second|720p|image-to-video/);
+  }
+});
+
+test("generated delivery artifacts stay ignored while reproducible source stays tracked", () => {
+  const generated = [
+    "outputs/social/sol-ultra-gearbox-launch/gearbox-launch-bilingual.mp4",
+    "media/launch-video/public/generated/routing-background.png",
+    "media/launch-video/public/voice/narration.wav",
+    "media/launch-video/public/xai/gear-routing.mp4",
+    "media/launch-video/renders/gearbox-launch-clean.mp4",
+    "media/launch-video/receipts/gear-routing.json",
+  ];
+  for (const path of generated) {
+    assert.equal(spawnSync("git", ["check-ignore", "-q", path], { cwd: repositoryRoot }).status, 0, `${path} must be ignored`);
+  }
+  for (const path of [
+    "media/launch-video/src/Root.tsx",
+    "media/launch-video/prompts/keyframes/01-routing-data-streams.md",
+    "media/launch-video/tapes/jq/doctor-pass.jq",
+  ]) {
+    assert.equal(spawnSync("git", ["check-ignore", "-q", path], { cwd: repositoryRoot }).status, 1, `${path} must remain source-controlled`);
+  }
 });
 
 test("production source contains no private paths, secrets, or sensitive configuration artifacts", async () => {
