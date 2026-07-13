@@ -24,6 +24,7 @@ import {
   ROLE_SPECS,
   atomicWrite,
   backupFile,
+  cleanupProbeArtifacts,
   findProbeRollouts,
   hashTree,
   readOptional,
@@ -138,13 +139,14 @@ async function runDoctor() {
 
   const modelCachePath = join(CODEX_HOME, "models_cache.json");
   const modelCache = JSON.parse(await readFile(modelCachePath, "utf8"));
-  const modelChecks = ROLE_SPECS.filter((role) => role.smoke).map((role) => {
+  const modelChecks = ROLE_SPECS.map((role) => {
     const model = modelCache.models?.find((candidate) => candidate.slug === role.model);
     const efforts = model?.supported_reasoning_levels?.map((item) => item.effort) ?? [];
     return {
       role: role.name,
       model: role.model,
       effort: role.effort,
+      supportedEfforts: efforts,
       present: Boolean(model),
       effortSupported: efforts.includes(role.effort),
       multiAgentVersion: model?.multi_agent_version ?? null,
@@ -402,7 +404,7 @@ async function runRoleProbe(spec) {
   if (errorSummary) {
     process.stderr.write(`SMOKE_COMMAND_ERROR ${spec.name}\n${errorSummary}\n`);
   }
-  return {
+  const result = {
     ...verification,
     pass:
       verification.pass && Object.values(runtimeChecks).every(Boolean),
@@ -419,6 +421,19 @@ async function runRoleProbe(spec) {
       errorSummary,
     },
   };
+  let cleanup;
+  try {
+    cleanup = {
+      pass: true,
+      ...(await cleanupProbeArtifacts([probeHome, fixture.cwd])),
+    };
+  } catch (error) {
+    cleanup = { pass: false, errorSummary: safeErrorSummary(error.message) };
+  }
+  result.cleanup = cleanup;
+  result.runtimeChecks.temporaryArtifactsCleaned = cleanup.pass;
+  result.pass = result.pass && cleanup.pass;
+  return result;
 }
 
 function smokeMarkdown(report) {

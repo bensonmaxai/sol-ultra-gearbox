@@ -1,5 +1,5 @@
 name = "terra_max_worker"
-description = "Legacy Terra Max compatibility worker. Use only when explicitly requested; terra_worker is the normal implementation route."
+description = "Opt-in Terra Max compatibility worker. Use only when the owner explicitly requests this exact role or an existing workflow requires it; terra_worker is the normal implementation route."
 model = "gpt-5.6-terra"
 model_reasoning_effort = "max"
 sandbox_mode = "workspace-write"

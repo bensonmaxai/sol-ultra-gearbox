@@ -1,6 +1,6 @@
 ---
 name: sol-ultra-gearbox
-description: Audit, verify, install, route, and roll back Codex typed-subagent configurations for Sol, Terra, and Luna roles. Use when working with Sol Ultra or multi-agent model routing, custom agent TOML files, spawn_agent schema visibility, role smoke tests, cost evidence, global Gearbox installation, or fail-closed rollback.
+description: Audit, verify, install, route, and roll back Codex Sol root modes plus typed Terra and Luna subagent configurations. Use when working with Sol Max or Ultra, multi-agent model routing, custom agent TOML files, spawn_agent schema visibility, role smoke tests, cost evidence, global Gearbox installation, or fail-closed rollback.
 ---
 
 # Sol Ultra Gearbox
@@ -21,6 +21,9 @@ configuration edits by hand.
 Read [references/risk-gates.md](references/risk-gates.md) before any live probe,
 global write, or public release.
 
+Read [references/routing-matrix.md](references/routing-matrix.md) before model
+or effort selection, changing role defaults, or deciding between Max and Ultra.
+
 ## Run the least costly gate
 
 For an audit or planned change, run:
@@ -33,6 +36,32 @@ node scripts/gearbox.mjs apply --promote-v2 --dry-run
 
 Report static checks as static evidence only. Do not claim typed routing works
 until persisted runtime metadata proves it.
+
+## Route root modes and typed roles
+
+Treat Sol root modes and typed child roles as different controls.
+
+- Keep Sol as the root decision-maker and use the lightest sufficient root
+  effort.
+- Use Sol Max as a single root for ambiguous, tightly sequential, high-risk, or
+  difficult-to-verify work that does not benefit from parallel delegation. Sol
+  Max is a root execution mode, not an `agent_type`; do not spawn a Sol child to
+  simulate it.
+- Use Sol Ultra only when at least two independent workstreams have concrete,
+  non-overlapping deliverables.
+- Route deterministic reads to `luna_clerk`, exploration to `terra_explorer`,
+  planned bounded implementation to `terra_worker`, and focused high-risk diff
+  review to `sol_reviewer`.
+- Reserve `terra_ultra_specialist` for exceptional module-scale work with an
+  exclusive scope and safe rollback path.
+- Support `terra_max_worker` as an explicit opt-in compatibility role when the
+  owner requests that exact role or an existing workflow depends on its Max
+  effort profile. Never select it automatically or treat it as the normal
+  upgrade from `terra_worker`.
+
+Use the routing matrix for the complete Low through Ultra mapping. Do not create
+one custom role for every supported effort; keep only profiles with a distinct,
+stable responsibility.
 
 ## Decide whether delegation is allowed
 

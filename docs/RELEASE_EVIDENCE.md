@@ -16,9 +16,9 @@ reports remain local because they contain machine-specific paths.
 
 | Gate | Result |
 |---|---|
-| Node unit tests | 18 passed, 0 failed |
+| Node unit tests | 22 passed, 0 failed |
 | Gearbox doctor | PASS |
-| Global apply dry-run | PASS; config and AGENTS unchanged |
+| Global apply dry-run | PASS; config unchanged; managed AGENTS block would update |
 | Release scanner | PASS |
 | Official skill validator | PASS |
 | Global skill install status | Managed and source hashes match |
@@ -44,6 +44,25 @@ model, reasoning-effort, or service-tier override.
 Every role also passed persisted lineage, exact runtime identity, depth 1, no
 descendant spawn, expected marker, and filesystem-scope checks. The real global
 config contents were identical before and after the isolated smoke.
+
+Anti-slop follow-up found that completed probes retained their isolated homes
+and fixtures. The implementation now removes only exact Gearbox-owned paths
+under the OS temporary root and treats cleanup failure as a hard failure. This
+guard is covered by a regression test; the published role evidence above comes
+from the earlier pre-cleanup smoke run.
+
+## Model-routing correction
+
+The bundled skill now distinguishes Sol Max single-root reasoning from Sol
+Ultra parallel orchestration and includes a complete work-to-model routing
+matrix. `terra_max_worker` is documented as an explicit opt-in compatibility
+role rather than an automatic upgrade from `terra_worker`.
+
+The 2026-07-13 local catalog reported Low through Ultra for Sol and Terra, and
+Low through Max for Luna. Gearbox doctor now statically validates all six role
+profiles, including Terra Max. No new cost-bearing live probe was run for this
+documentation and doctor change; the five-role runtime evidence above remains
+the latest published smoke evidence.
 
 ## Deliberate exclusions
 

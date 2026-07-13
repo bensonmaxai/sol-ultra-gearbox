@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -9,6 +10,7 @@ import {
   CONFIG_ROLES_MARKER,
   CONFIG_V2_MARKER,
   ROLE_SPECS,
+  cleanupProbeArtifacts,
   redactSensitive,
   removeOwnedSmokeProjectEntries,
   renderAgentsMd,
@@ -137,6 +139,8 @@ test("renderAgentsMd replaces the workflow section and preserves neighbors", () 
   const output = renderAgentsMd(input);
   assert.match(output, new RegExp(AGENTS_MARKER));
   assert.match(output, /luna_clerk/);
+  assert.match(output, /Sol Max/);
+  assert.match(output, /terra_max_worker/);
   assert.match(output, /## Later Section\n\nKeep me\./);
   assert.doesNotMatch(output, /old rule|old trigger/);
   assert.equal(renderAgentsMd(output), output);
@@ -165,6 +169,29 @@ test("redactSensitive removes sensitive payloads but retains usage counts", () =
   assert.equal(output.nested.cookie, "[REDACTED]");
   assert.equal(output.nested.total_tokens, 456);
   assert.doesNotMatch(JSON.stringify(output), /SECRET_/);
+});
+
+test("cleanupProbeArtifacts removes only owned temporary directories", async (t) => {
+  const owned = await Promise.all([
+    mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-luna_clerk-")),
+    mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-terra_max_worker-")),
+  ]);
+  const unrelated = await mkdtemp(join(tmpdir(), "unrelated-probe-"));
+  t.after(() => rm(unrelated, { recursive: true, force: true }));
+  await Promise.all(
+    owned.map((path) =>
+      writeFile(join(path, "evidence.txt"), "temporary\n", "utf8"),
+    ),
+  );
+
+  const result = await cleanupProbeArtifacts(owned);
+  assert.equal(result.removed.length, 2);
+  for (const path of owned) await assert.rejects(stat(path), /ENOENT/);
+  await assert.rejects(
+    cleanupProbeArtifacts([unrelated]),
+    /Refusing to remove non-Gearbox probe path/,
+  );
+  assert.equal((await stat(unrelated)).isDirectory(), true);
 });
 
 test("verifyProbe requires typed lineage, exact runtime settings, and no descendants", () => {
