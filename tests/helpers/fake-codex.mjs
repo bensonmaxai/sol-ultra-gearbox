@@ -16,12 +16,15 @@ const config = (key) => {
 };
 const cwd = valueAfter("-C");
 const prompt = args.at(-1) ?? "";
-const marker = /Return ([^\\s]+) only after/.exec(prompt)?.[1] ?? "MISSING_MARKER";
+const marker = /append ([^\\s]+) on a separate final line/.exec(prompt)?.[1] ?? "MISSING_MARKER";
 const mode = process.env.FAKE_CODEX_MODE ?? "success";
 const auth = await lstat(join(process.env.CODEX_HOME, "auth.json"));
 if (!auth.isSymbolicLink() || !/sol-ultra-gearbox-v2-dispatch-home-(luna_clerk|terra_explorer)-/.test(process.env.CODEX_HOME)) process.exit(72);
 
-if (mode === "timeout") setTimeout(() => process.exit(0), 60_000);
+if (mode === "timeout") {
+  process.on("SIGTERM", () => {});
+  setTimeout(() => process.exit(0), 60_000);
+}
 else {
   if (mode === "write") await writeFile(join(cwd, "fake-write.txt"), "forbidden\\n", "utf8");
   if (mode === "filesystem_mutations") {
@@ -35,15 +38,23 @@ else {
   await mkdir(sessionRoot, { recursive: true });
   const model = mode === "model_mismatch" ? "gpt-5.6-sol" : config("model");
   const calls = mode === "spawn" ? [{ name: "spawn_agent", arguments: "{}" }] : [];
-  const final = mode === "marker_mismatch" ? "WRONG_MARKER" : marker;
+  const final = mode === "marker_mismatch" ? "WRONG_MARKER" : "{\\\"kind\\\":\\\"fake-deliverable\\\",\\\"value\\\":\\\"verified\\\"}\\n" + marker;
   const events = [
-    { type: "session_meta", payload: { id: "fake-root", thread_source: mode === "source_mismatch" ? "subagent" : "root", cwd } },
+    { type: "session_meta", payload: { id: "fake-root", thread_source: mode === "source_mismatch" ? "subagent" : mode === "source_missing" ? null : "user", cwd } },
     { type: "turn_context", payload: { model, effort: mode === "effort_mismatch" ? "high" : config("model_reasoning_effort"), sandbox_policy: { type: mode === "sandbox_mismatch" ? "workspace-write" : valueAfter("-s") } } },
     ...calls.map((call) => ({ type: "response_item", payload: { type: "function_call", ...call } })),
     ...(mode === "token_missing" ? [] : [{ type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { total_tokens: 17 } } } }]),
     { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: final }] } },
   ];
+  if (mode === "two_roots") events[0].payload.id = "fake-root-one";
   await writeFile(join(sessionRoot, "rollout.jsonl"), events.map(JSON.stringify).join("\\n"), "utf8");
+  if (mode === "two_roots") {
+    const extra = structuredClone(events);
+    extra[0].payload.id = "fake-root-two";
+    await writeFile(join(sessionRoot, "second.jsonl"), extra.map(JSON.stringify).join("\\n"), "utf8");
+  }
+  if (mode === "malformed") await writeFile(join(sessionRoot, "malformed.jsonl"), "{not json", "utf8");
+  if (mode === "pipe_output") process.stdout.write("x".repeat(2 * 1024 * 1024));
 }
 `;
 
