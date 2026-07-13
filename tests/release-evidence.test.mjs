@@ -48,6 +48,40 @@ function evidence(source = sourceManifest()) {
     },
     costEvidence: {
       kind: "real_work",
+      observedRuntime: {
+        schemaVersion: 1,
+        kind: "real_work_child_runtime",
+        generatedAt: "2026-07-13T13:45:00.000Z",
+        scope: "child_only",
+        parentThreadCount: 1,
+        childSessionCount: 1,
+        completedTurnCount: 1,
+        runtimeMetadataVerifiedSessionCount: 1,
+        forkNoneSessionCount: 1,
+        nestedSpawnSessionCount: 0,
+        policyCompliantSessionCount: 1,
+        policyRejectedSessionCount: 0,
+        permissionMismatchSessionCount: 0,
+        spawnOverrideMismatchSessionCount: 0,
+        roles: [
+          {
+            role: "terra_worker",
+            model: "gpt-5.6-terra",
+            effort: "high",
+            sessions: 1,
+            completedTurns: 1,
+            policyCompliantSessions: 1,
+            policyRejectedSessions: 0,
+            permissionMismatchSessions: 0,
+            spawnOverrideMismatchSessions: 0,
+            tokens: {
+              uncachedInput: 100,
+              cachedInput: 20,
+              output: 10,
+            },
+          },
+        ],
+      },
       completePairCount: 0,
       requiredPairCount: 10,
       eligibleForEstimate: false,
@@ -117,6 +151,7 @@ test("release evidence never publishes an estimator before ten pairs", () => {
     ...evidence(current),
     costEvidence: {
       kind: "real_work",
+      observedRuntime: evidence(current).costEvidence.observedRuntime,
       completePairCount: 9,
       requiredPairCount: 10,
       eligibleForEstimate: false,
@@ -130,6 +165,33 @@ test("release evidence never publishes an estimator before ten pairs", () => {
   });
   assert.equal(result.pass, false);
   assert.equal(result.checks.costBoundary, false);
+});
+
+test("release evidence keeps observed child usage distinct from paired estimates", () => {
+  const current = sourceManifest();
+  const value = evidence(current);
+  const markdown = renderReleaseEvidence(value);
+  assert.match(markdown, /Observed typed child runtime: 1 session, 1 completed turn/);
+  assert.match(markdown, /Child-only runtime evidence is not a root-inclusive task cost/);
+  assert.match(markdown, /Complete comparable pairs: 0\/10/);
+
+  const inconsistent = finalizeReleaseEvidence({
+    ...value,
+    costEvidence: {
+      ...value.costEvidence,
+      observedRuntime: {
+        ...value.costEvidence.observedRuntime,
+        childSessionCount: 2,
+      },
+    },
+  });
+  const result = validateReleaseEvidence({
+    evidence: inconsistent,
+    markdown: renderReleaseEvidence(inconsistent),
+    currentSource: current,
+  });
+  assert.equal(result.pass, false);
+  assert.equal(result.checks.observedRuntimeBoundary, false);
 });
 
 test("source manifest excludes generated evidence and raw reports", () => {

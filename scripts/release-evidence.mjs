@@ -4,7 +4,13 @@ import { spawn } from "node:child_process";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createLedger, evaluateLedger, validateLedger } from "../lib/cost-evidence.mjs";
+import {
+  createLedger,
+  evaluateLedger,
+  summarizeObservedUsageReport,
+  validateLedger,
+  validateObservedUsageReport,
+} from "../lib/cost-evidence.mjs";
 import { atomicWrite, ROLE_SPECS, writeJson } from "../lib/gearbox.mjs";
 import {
   createRepositorySourceManifest,
@@ -137,6 +143,14 @@ function summarizeSddAdapter(report, currentHead) {
   };
 }
 
+function summarizeObservedUsage(report) {
+  const validation = validateObservedUsageReport(report);
+  if (!validation.valid) {
+    throw new Error(`Observed real-work usage report is invalid: ${validation.errors.join("; ")}`);
+  }
+  return summarizeObservedUsageReport(report);
+}
+
 async function runTests() {
   const result = await runCommand(process.execPath, [
     "--test",
@@ -189,7 +203,7 @@ async function main() {
   const [, , command, ...args] = process.argv;
   if (command !== "generate") {
     throw new Error(
-      "Usage: node scripts/release-evidence.mjs generate --smoke <reports/.../smoke.json> --sdd <reports/.../sdd.json> [--cost-ledger <path>]",
+      "Usage: node scripts/release-evidence.mjs generate --smoke <reports/.../smoke.json> --sdd <reports/.../sdd.json> --usage <reports/.../real-work-usage.json> [--cost-ledger <path>]",
     );
   }
   const statusBefore = await runCommand("git", [
@@ -202,10 +216,11 @@ async function main() {
     throw new Error("Release evidence generation requires a clean Git tree");
   }
   const currentHead = headResult.stdout.trim();
-  const [tests, smokeReport, sddReport, costStatus] = await Promise.all([
+  const [tests, smokeReport, sddReport, usageReport, costStatus] = await Promise.all([
     runTests(),
     readLocalReport(optionValue(args, "--smoke"), "smoke.json"),
     readLocalReport(optionValue(args, "--sdd"), "sdd.json"),
+    readLocalReport(optionValue(args, "--usage"), "real-work-usage.json"),
     loadCostStatus(
       optionValue(args, "--cost-ledger") ?? join(REPORTS_ROOT, "cost-evidence.json"),
     ),
@@ -232,6 +247,7 @@ async function main() {
     },
     costEvidence: {
       kind: "real_work",
+      observedRuntime: summarizeObservedUsage(usageReport),
       completePairCount: costStatus.completePairCount,
       requiredPairCount: 10,
       eligibleForEstimate: costStatus.eligibleForEstimate,
@@ -245,7 +261,7 @@ async function main() {
   await writeJson(JSON_PATH, evidence);
   await atomicWrite(MARKDOWN_PATH, renderReleaseEvidence(evidence));
   process.stdout.write(
-    `RELEASE_EVIDENCE_PASS tests=${tests.total} pairs=${costStatus.completePairCount}\n`,
+    `RELEASE_EVIDENCE_PASS tests=${tests.total} observed_sessions=${usageReport.childSessionCount} pairs=${costStatus.completePairCount}\n`,
   );
 }
 

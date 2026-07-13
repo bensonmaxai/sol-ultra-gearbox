@@ -151,14 +151,19 @@ the managed command; it disables the folder instead of deleting it.
 ## Prepare a public release
 
 Generate the paired machine-readable and Markdown evidence with
-`npm run release:evidence -- --smoke <path> --sdd <path>`, then run unit tests,
-`npm run release:check`, the official skill validator when available, and a
-local secret scanner. Keep raw reports, auth state, complete user config,
-rollout contents, and private filesystem paths out of Git.
+`npm run release:evidence -- --smoke <path> --sdd <path> --usage <path>`, then
+run unit tests, `npm run release:check`, the official skill validator when
+available, and a local secret scanner. Keep raw reports, auth state, complete
+user config, rollout contents, and private filesystem paths out of Git.
 
 Use the real-work ledger for comparable accepted tasks only. Smoke evidence is
 rejected, and no estimator or savings claim is allowed before ten complete
 `sol_single`/`gearbox` pairs.
+
+Record observed typed child runtime separately from paired evidence. Child-only
+session and token aggregates prove usage but do not reconstruct root cost or
+form an A/B pair. Preserve permission or spawn-argument mismatches as rejected
+policy evidence instead of silently counting them as accepted Gearbox samples.
 
 ## Report the result
 

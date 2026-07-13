@@ -217,7 +217,8 @@ artifacts from their ignored local reports:
 ```bash
 npm run release:evidence -- \
   --smoke reports/<run>/smoke.json \
-  --sdd reports/<run>/sdd.json
+  --sdd reports/<run>/sdd.json \
+  --usage reports/<run>/real-work-usage.json
 ```
 
 ```bash
@@ -234,8 +235,10 @@ pull request.
 
 ## Real-work cost evidence
 
-Smoke tokens are not a savings benchmark. Add only sanitized, accepted,
-comparable real work to the ignored ledger described in
+Smoke tokens are not a savings benchmark. Historical typed child sessions can
+be summarized as child-only observed runtime, including rejected policy runs,
+without pretending they are full-task A/B samples. Add only sanitized,
+accepted, root-inclusive comparable work to the ignored ledger described in
 [docs/REAL_WORK_EVIDENCE.md](docs/REAL_WORK_EVIDENCE.md):
 
 ```bash

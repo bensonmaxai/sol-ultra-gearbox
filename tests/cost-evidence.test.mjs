@@ -4,6 +4,8 @@ import {
   addRecord,
   createLedger,
   evaluateLedger,
+  summarizeObservedUsageReport,
+  validateObservedUsageReport,
   validateRecord,
 } from "../lib/cost-evidence.mjs";
 
@@ -34,6 +36,76 @@ function addCompletePair(ledger, index) {
     addRecord(ledger, record({ pairId })),
     record({ pairId, variant: "gearbox", durationMs: 900 }),
   );
+}
+
+function observedUsageReport(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    kind: "real_work_child_runtime",
+    generatedAt: "2026-07-13T13:45:00.000Z",
+    scope: "child_only",
+    parentThreadCount: 4,
+    childSessionCount: 15,
+    completedTurnCount: 24,
+    runtimeMetadataVerifiedSessionCount: 15,
+    forkNoneSessionCount: 15,
+    nestedSpawnSessionCount: 0,
+    policyCompliantSessionCount: 2,
+    policyRejectedSessionCount: 13,
+    permissionMismatchSessionCount: 13,
+    spawnOverrideMismatchSessionCount: 1,
+    roles: [
+      {
+        role: "terra_explorer",
+        model: "gpt-5.6-terra",
+        effort: "medium",
+        sessions: 7,
+        completedTurns: 8,
+        policyCompliantSessions: 0,
+        policyRejectedSessions: 7,
+        permissionMismatchSessions: 7,
+        spawnOverrideMismatchSessions: 0,
+        tokens: {
+          uncachedInput: 594377,
+          cachedInput: 3254784,
+          output: 40790,
+        },
+      },
+      {
+        role: "sol_reviewer",
+        model: "gpt-5.6-sol",
+        effort: "high",
+        sessions: 6,
+        completedTurns: 13,
+        policyCompliantSessions: 0,
+        policyRejectedSessions: 6,
+        permissionMismatchSessions: 6,
+        spawnOverrideMismatchSessions: 1,
+        tokens: {
+          uncachedInput: 695371,
+          cachedInput: 9668352,
+          output: 69929,
+        },
+      },
+      {
+        role: "terra_worker",
+        model: "gpt-5.6-terra",
+        effort: "high",
+        sessions: 2,
+        completedTurns: 3,
+        policyCompliantSessions: 2,
+        policyRejectedSessions: 0,
+        permissionMismatchSessions: 0,
+        spawnOverrideMismatchSessions: 0,
+        tokens: {
+          uncachedInput: 332310,
+          cachedInput: 6958848,
+          output: 53726,
+        },
+      },
+    ],
+    ...overrides,
+  };
 }
 
 test("validation rejects malformed, smoke, and sensitive records", () => {
@@ -113,4 +185,36 @@ test("raw comparison aggregates exclude incomplete pairs", () => {
   assert.equal(status.incompletePairCount, 1);
   assert.equal(status.rawEvidence.sol_single.recordCount, 1);
   assert.equal(status.rawEvidence.sol_single.durationMs, 1200);
+});
+
+test("observed child runtime is validated separately from comparable pairs", () => {
+  const report = observedUsageReport();
+  assert.equal(validateObservedUsageReport(report).valid, true);
+  const summary = summarizeObservedUsageReport(report);
+  assert.equal(summary.childSessionCount, 15);
+  assert.equal(summary.completedTurnCount, 24);
+  assert.equal(summary.policyCompliantSessionCount, 2);
+  assert.equal(summary.permissionMismatchSessionCount, 13);
+  assert.equal("completePairCount" in summary, false);
+  assert.equal("estimatedSavings" in summary, false);
+});
+
+test("observed child runtime rejects private fields and inconsistent totals", () => {
+  assert.equal(
+    validateObservedUsageReport(observedUsageReport({ threadIds: ["private"] })).valid,
+    false,
+  );
+  assert.equal(
+    validateObservedUsageReport(observedUsageReport({ childSessionCount: 14 })).valid,
+    false,
+  );
+  assert.equal(
+    validateObservedUsageReport(
+      observedUsageReport({ policyCompliantSessionCount: 3 }),
+    ).valid,
+    false,
+  );
+  const duplicateRole = observedUsageReport();
+  duplicateRole.roles = [...duplicateRole.roles, duplicateRole.roles[0]];
+  assert.equal(validateObservedUsageReport(duplicateRole).valid, false);
 });
