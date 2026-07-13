@@ -17,9 +17,11 @@ import {
   renderAgentsMd,
   renderConfig,
   rollbackConfig,
+  summarizeRollout,
   validateTypedSpawnArgs,
   validateRoleText,
   verifyProbe,
+  writeJson,
 } from "../lib/gearbox.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -234,6 +236,42 @@ test("redactSensitive removes sensitive payloads but retains usage counts", () =
   assert.equal(output.nested.cookie, "[REDACTED]");
   assert.equal(output.nested.total_tokens, 456);
   assert.doesNotMatch(JSON.stringify(output), /SECRET_/);
+});
+
+test("rollout summary keeps session correlation in memory but writeJson removes raw rollout content", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "gearbox-rollout-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const rollout = join(directory, "rollout.jsonl");
+  const report = join(directory, "report.json");
+  await writeFile(
+    rollout,
+    [
+      JSON.stringify({
+        type: "session_meta",
+        payload: { id: "session-secret", thread_source: "root" },
+      }),
+      JSON.stringify({
+        type: "turn_context",
+        payload: { model: "gpt-5.6-terra", prompt: "raw prompt" },
+      }),
+      JSON.stringify({
+        type: "event_msg",
+        payload: { type: "agent_message", message: "raw rollout content" },
+      }),
+      JSON.stringify({
+        type: "event_msg",
+        payload: { type: "token_count", info: { total_token_usage: { total_tokens: 7 } } },
+      }),
+    ].join("\n"),
+    "utf8",
+  );
+  const summary = await summarizeRollout(rollout);
+  assert.equal(summary.threadSource, "root");
+  assert.equal(summary.sessionId, "session-secret");
+  await writeJson(report, summary);
+  const persisted = await readFile(report, "utf8");
+  assert.doesNotMatch(persisted, /session-secret|raw prompt|raw rollout content/);
+  assert.match(persisted, /total_tokens/);
 });
 
 test("cleanupProbeArtifacts removes only owned temporary directories", async (t) => {
