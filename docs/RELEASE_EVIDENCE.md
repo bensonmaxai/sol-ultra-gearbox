@@ -16,33 +16,35 @@ Raw smoke reports remain local because they contain machine-specific paths.
 
 | Gate | Result |
 |---|---|
-| Node unit tests | 23 passed, 0 failed |
+| Node unit tests | 25 passed, 0 failed |
 | Gearbox doctor | PASS |
 | Global apply dry-run | PASS; config unchanged; managed AGENTS block would update |
 | Managed global apply | PASS; six-role smoke and fresh-root smoke passed |
 | Release scanner | PASS |
 | Official skill validator | PASS |
 | Global skill install status | Managed and source hashes match |
-| Fresh explicit `$sol-ultra-gearbox` invocation | `GEARBOX_SKILL_FORWARD_PASS` |
+| Fresh explicit `$sol-ultra-gearbox` invocation | `GEARBOX_SKILL_COMPAT_PASS` |
 | Bash syntax check | PASS |
 | Gitleaks 8.30.1 directory scan | No leaks found |
 
 ## Cost-bearing six-role smoke
 
-The open-source candidate ran one sequential, no-retry smoke pass on
-2026-07-13. Each parent used persisted `gpt-5.6-sol` / `max` runtime metadata
-and spawned exactly one typed child with `fork_turns="none"`; no parent supplied
-the child model, reasoning-effort, or service-tier override.
+The compatibility-gate candidate ran one selected sequential, no-retry smoke
+pass for this evidence table on 2026-07-13. Each parent used persisted
+`gpt-5.6-sol` / `max` runtime metadata and spawned exactly one typed child with
+`fork_turns="none"`; no parent supplied the child model, reasoning-effort, or
+service-tier override. The managed apply independently repeated the six-role
+smoke before writing global files.
 
 | Role | Actual model | Effort | Sandbox | Parent tokens | Child tokens | Result |
 |---|---|---|---|---:|---:|---|
-| `luna_clerk` | `gpt-5.6-luna` | low | read-only | 40,387 | 40,724 | PASS |
-| `terra_explorer` | `gpt-5.6-terra` | medium | read-only | 39,955 | 26,468 | PASS |
-| `terra_worker` | `gpt-5.6-terra` | high | workspace-write | 41,389 | 88,636 | PASS |
-| `sol_reviewer` | `gpt-5.6-sol` | high | read-only | 54,398 | 41,049 | PASS |
-| `terra_ultra_specialist` | `gpt-5.6-terra` | ultra | workspace-write | 41,982 | 42,684 | PASS |
-| `terra_max_worker` | `gpt-5.6-terra` | max | workspace-write | 41,985 | 42,641 | PASS |
-| **Total** |  |  |  | **260,096** | **282,202** | **PASS** |
+| `luna_clerk` | `gpt-5.6-luna` | low | read-only | 40,357 | 26,622 | PASS |
+| `terra_explorer` | `gpt-5.6-terra` | medium | read-only | 40,294 | 27,214 | PASS |
+| `terra_worker` | `gpt-5.6-terra` | high | workspace-write | 41,837 | 70,887 | PASS |
+| `sol_reviewer` | `gpt-5.6-sol` | high | read-only | 40,384 | 26,966 | PASS |
+| `terra_ultra_specialist` | `gpt-5.6-terra` | ultra | workspace-write | 41,420 | 27,870 | PASS |
+| `terra_max_worker` | `gpt-5.6-terra` | max | workspace-write | 42,103 | 57,400 | PASS |
+| **Total** |  |  |  | **246,395** | **236,959** | **PASS** |
 
 Every role also passed persisted lineage, exact parent and child runtime
 identity, depth 1, no descendant spawn, expected marker, filesystem scope, and
@@ -52,6 +54,18 @@ before and after the isolated smoke.
 The managed apply then updated the global AGENTS block, installed all six role
 files and the launcher, passed post-install static checks, and passed a fresh
 root smoke. File hashes matched the rollback manifest after installation.
+
+## Skill-driven delegation compatibility
+
+The managed policy and global skill include explicit adapters for
+`subagent-driven-development`, `dispatching-parallel-agents`,
+`requesting-code-review`, `security-scan`, and `security-diff-scan`. Unit tests
+verify that generic or untyped spawns, model or effort overrides, non-`none`
+forks, empty task messages, and unknown workflow skills fail closed.
+
+This is instruction-level policy plus static spawn-argument validation. It does
+not patch or intercept the Codex `spawn_agent` implementation, so the runtime
+smoke proves the observed typed paths rather than a universal tool hook.
 
 ## Model-routing correction
 
