@@ -6,9 +6,16 @@ export type CaptionPair = {
 };
 
 export type SceneMedia = {
-  enabled?: boolean;
-  generatedBackground?: string;
+  enabled: boolean;
+  generatedBackground: string;
+  videoEnabled: boolean;
   xaiClip?: string;
+};
+
+export type DoctorMedia = {
+  enabled: boolean;
+  recordingPath: string;
+  playbackRate: number;
 };
 
 export type LaunchVideoConfig = {
@@ -19,5 +26,6 @@ export type LaunchVideoConfig = {
     routing: SceneMedia;
     failClosed: SceneMedia;
     rollback: SceneMedia;
+    doctor: DoctorMedia;
   };
 };

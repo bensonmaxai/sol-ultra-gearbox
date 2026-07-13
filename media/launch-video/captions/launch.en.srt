@@ -1,91 +1,99 @@
 1
-00:00:00,000 --> 00:00:01,950
-Most AI agent workflows
+00:00:00,000 --> 00:00:02,000
+Most AI agent workflows trust
 
 2
-00:00:01,950 --> 00:00:03,900
-trust what a model says it is.
+00:00:02,000 --> 00:00:04,000
+what a model says it is.
 
 3
-00:00:03,900 --> 00:00:05,850
-Sol Ultra Gearbox verifies
+00:00:04,000 --> 00:00:06,000
+Sol Ultra Gearbox verifies what actually ran.
 
 4
-00:00:05,850 --> 00:00:07,800
-what actually ran. It routes Codex work
+00:00:06,000 --> 00:00:07,750
+It routes Codex work
 
 5
-00:00:07,800 --> 00:00:09,750
-to typed Sol, Terra, and Luna roles.
+00:00:07,750 --> 00:00:09,500
+to typed Sol,
 
 6
-00:00:09,750 --> 00:00:11,700
-Then it checks the real model,
+00:00:09,500 --> 00:00:11,250
+Terra, and Luna
 
 7
-00:00:11,700 --> 00:00:13,650
-reasoning effort, sandbox, lineage,
+00:00:11,250 --> 00:00:13,000
+roles.
 
 8
-00:00:13,650 --> 00:00:15,600
-token usage, and filesystem scope
+00:00:13,000 --> 00:00:15,000
+Then it checks the real model,
 
 9
-00:00:15,600 --> 00:00:17,550
-from persisted runtime metadata.
+00:00:15,000 --> 00:00:17,000
+reasoning effort, sandbox,
 
 10
-00:00:17,550 --> 00:00:19,500
-If anything is missing or mismatched,
+00:00:17,000 --> 00:00:19,000
+lineage, token usage,
 
 11
-00:00:19,500 --> 00:00:21,450
-it fails closed.
+00:00:19,000 --> 00:00:21,000
+and filesystem scope
 
 12
-00:00:21,450 --> 00:00:23,400
-The built-in doctor validates
+00:00:21,000 --> 00:00:23,000
+from persisted runtime metadata.
 
 13
-00:00:23,400 --> 00:00:25,350
-six role profiles.
+00:00:23,000 --> 00:00:25,000
+If anything is missing
 
 14
-00:00:25,350 --> 00:00:27,300
-Dry-run previews global changes,
+00:00:25,000 --> 00:00:27,000
+or mismatched,
 
 15
-00:00:27,300 --> 00:00:29,250
-while managed apply includes rollback.
+00:00:27,000 --> 00:00:29,000
+it fails closed.
 
 16
-00:00:29,250 --> 00:00:31,200
-This release passed twenty-three tests
+00:00:29,000 --> 00:00:30,800
+The built-in doctor validates
 
 17
-00:00:31,200 --> 00:00:33,150
-and a six-role runtime smoke test.
+00:00:30,800 --> 00:00:32,600
+six role profiles.
 
 18
-00:00:33,150 --> 00:00:35,100
-If your team needs multi-agent workflows
+00:00:32,600 --> 00:00:34,400
+Dry-run previews global changes,
 
 19
-00:00:35,100 --> 00:00:37,050
-you can audit, reproduce,
+00:00:34,400 --> 00:00:36,200
+while managed apply
 
 20
-00:00:37,050 --> 00:00:39,000
-and reverse,
+00:00:36,200 --> 00:00:38,000
+includes rollback.
 
 21
-00:00:39,000 --> 00:00:40,950
-try Sol Ultra Gearbox
+00:00:38,000 --> 00:00:39,400
+This release passed twenty-three tests
 
 22
-00:00:40,950 --> 00:00:42,900
-on GitHub.
+00:00:39,400 --> 00:00:40,800
+and a six-role runtime smoke test.
 
 23
-00:00:42,900 --> 00:00:45,000
-Audit. Reproduce. Reverse.
+00:00:40,800 --> 00:00:42,200
+If your team needs multi-agent workflows
+
+24
+00:00:42,200 --> 00:00:43,600
+you can audit, reproduce, and reverse,
+
+25
+00:00:43,600 --> 00:00:45,000
+try Sol Ultra Gearbox on GitHub.

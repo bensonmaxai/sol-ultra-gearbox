@@ -1,6 +1,20 @@
 # Sol Ultra Gearbox launch video
 
-Standalone 1080x1920 Remotion production package. It renders polished HTML/SVG fallback scenes even when `public/generated/`, `public/xai/`, and `public/voice/` are empty. To opt into a supplied enhancement, set the matching scene media `enabled` flag in the composition props and place the asset under `public/`.
+Standalone 1080x1920 Remotion production package. The code-native terminal remains the Doctor-scene fallback; generated scene backgrounds are staged under `public/generated/` and xAI clips under `public/xai/`.
+
+## Prepare supplied media
+
+Before enabling a full render, place the three owner-approved PNGs at:
+
+```text
+public/generated/routing-background.png
+public/generated/fail-closed-background.png
+public/generated/rollback-background.png
+```
+
+The three background media settings are enabled by default. xAI clips stay disabled through each scene's `videoEnabled: false`, so a missing MP4 is never requested. After a clip has been generated and reviewed, set only that scene's `videoEnabled` flag to `true`.
+
+To use the actual VHS capture during 29–38s, render `tapes/doctor-dry-run.tape` to `public/generated/doctor-dry-run.mp4`, then set `media.doctor.enabled` to `true`. Its deterministic `playbackRate: 3` fits the two command PASS summaries inside the nine-second Doctor scene. Until then, the code-native terminal is rendered instead.
 
 ## Commands
 
@@ -17,4 +31,6 @@ npm run copy:social
 
 Both MP4 commands use H.264 with `yuv420p`. `copy:social` copies the bilingual and clean MP4s, cover PNG, both SRT files, and approved Traditional Chinese copy to `outputs/social/sol-ultra-gearbox-launch/`. It intentionally fails until the three rendered artifacts exist.
 
-`npm run xai:dry-run` prints the three image-to-video commands only; it does not call xAI or create a billable job. The safe VHS tape is `tapes/doctor-dry-run.tape`; it records only `doctor` and the non-mutating apply dry-run through a deliberately reduced jq summary. It never runs the paid smoke command.
+`npm run xai:dry-run` runs three real local validations through the xAI helper with `--dry-run`; it does not call xAI or create a billable job. It uses `XAI_VIDEO_SCRIPT` when supplied, otherwise resolves the helper below `${CODEX_HOME:-$HOME/.codex}`. Live image-to-video generation is billable and still requires explicit owner authorization; no automatic retry is configured.
+
+The safe VHS tape is `tapes/doctor-dry-run.tape`; it writes `public/generated/doctor-dry-run.mp4`, records only `doctor` and the non-mutating apply dry-run through a deliberately reduced jq summary, and never runs the paid smoke command.

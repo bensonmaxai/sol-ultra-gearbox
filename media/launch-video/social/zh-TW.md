@@ -1,12 +1,13 @@
 # Sol Ultra Gearbox — 發佈文案（繁中）
 
-多代理 workflow，不能只相信模型自稱的身分。
+多代理工作流真正難的，不是「叫出更多 Agent」，而是你能不能證明：實際跑的是哪個模型、用了什麼 reasoning effort、權限範圍是否正確，失敗後能不能安全回復。
 
-Sol Ultra Gearbox 會從保存的 runtime metadata 驗證實際模型、推理強度、sandbox、lineage、Token 使用量與檔案系統範圍；任何資料缺失或不一致，就 fail closed。
+我們做了 Sol Ultra Gearbox，一套給 Codex typed subagents 使用的 fail-closed routing、verification 與 rollback 工具。任何 role、model、sandbox、lineage 或 filesystem scope 不一致，就會直接停止。
 
-內建 doctor 驗證六個角色設定，dry-run 先預覽全域變更，受控 apply 具備 rollback。這個版本已通過 23 項測試與六角色 runtime smoke test。
+目前版本已通過 23 項測試與六角色 runtime smoke test，專案已開源：
 
-如果你的團隊需要可稽核、可重現、可逆的多代理工作流：
 https://github.com/bensonmaxai/sol-ultra-gearbox
 
-#AIagents #MultiAgent #Codex #DevTools #OpenSource
+如果你也在做可稽核的多代理工作流，歡迎試用、Star，或分享你的使用情境。
+
+#Codex #AIAgents #MultiAgent #OpenSource #DeveloperTools
