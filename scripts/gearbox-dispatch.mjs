@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 
 import { constants } from "node:fs";
-import { lstat, open, realpath, readFile, unlink } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, open, readdir, realpath, readFile, unlink } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
-import { ROLE_SPECS, redactSensitive, sha256 } from "../lib/gearbox.mjs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { atomicWrite, cleanupProbeArtifacts, ROLE_SPECS, redactSensitive, sha256 } from "../lib/gearbox.mjs";
 import { planDispatch } from "../lib/dispatch-planner.mjs";
 import { DISPATCH_POLICY_RELATIVE_PATH, loadDispatchPolicy } from "../lib/dispatch-policy.mjs";
 import { runIsolatedRole } from "../lib/dispatch-runner.mjs";
 
 const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), ".codex");
-const OWNED_PACKET_DIRECTORY = /^sol-ultra-gearbox-v2-dispatch-packet-[A-Za-z0-9]+$/;
+const OWNED_PACKET_DIRECTORY = /^sol-ultra-gearbox-v2-packet-dispatch-[A-Za-z0-9]+$/;
 
 function off() {
   return { status: "GEARBOX_DISPATCH_OFF", mode: "off" };
@@ -108,14 +108,36 @@ async function readOwnedPacket(path, { consume }) {
 }
 
 function parsePacketArguments(args) {
-  if (args.includes("--packet") && args.filter((value) => value === "--packet").length !== 1) {
-    throw new TypeError("dispatch command accepts exactly one packet path");
+  const capabilityFlags = new Map([
+    ["--agent-type-visible", "agentTypeVisible"],
+    ["--runtime-metadata-available", "runtimeMetadataAvailable"],
+    ["--permissions-enforced", "permissionsEnforced"],
+  ]);
+  let packetPath = null;
+  let consume = false;
+  const capabilityInput = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    if (value === "--consume") {
+      if (consume) throw new TypeError("--consume may be specified once");
+      consume = true;
+      continue;
+    }
+    if (value === "--packet") {
+      if (packetPath !== null || !args[index + 1]) throw new TypeError("dispatch command accepts exactly one packet path");
+      packetPath = args[index + 1];
+      index += 1;
+      continue;
+    }
+    const key = capabilityFlags.get(value);
+    if (!key || Object.hasOwn(capabilityInput, key) || !["true", "false"].includes(args[index + 1])) {
+      throw new TypeError("dispatch capability flags must be unique exact booleans");
+    }
+    capabilityInput[key] = args[index + 1] === "true";
+    index += 1;
   }
-  const index = args.indexOf("--packet");
-  if (index < 0 || !args[index + 1] || args.some((value, position) => position !== index && position !== index + 1 && value !== "--consume")) {
-    throw new TypeError("dispatch command requires --packet <owned-temp-json> [--consume]");
-  }
-  return { packetPath: args[index + 1], consume: args.includes("--consume") };
+  if (packetPath === null) throw new TypeError("dispatch command requires --packet <owned-temp-json>");
+  return { packetPath, consume, capabilityInput };
 }
 
 function output(value) {
@@ -136,6 +158,55 @@ async function dispatchPolicy() {
   return loadDispatchPolicy(join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH));
 }
 
+function safeScopePath(scope) {
+  return (
+    typeof scope === "string" &&
+    scope.length > 0 &&
+    !isAbsolute(scope) &&
+    !scope.split(/[\\/]/).some((part) => part.length === 0 || part === "." || part === "..")
+  );
+}
+
+async function copyScopedEntry(source, target) {
+  const metadata = await lstat(source);
+  if (metadata.isSymbolicLink()) throw new TypeError("read scope must not contain symlinks");
+  if (metadata.isDirectory()) {
+    await mkdir(target, { recursive: true, mode: 0o700 });
+    for (const name of (await readdir(source)).sort()) {
+      await copyScopedEntry(join(source, name), join(target, name));
+    }
+    return;
+  }
+  if (!metadata.isFile()) throw new TypeError("read scope must contain only regular files and directories");
+  await atomicWrite(target, await readFile(source, "utf8"), 0o600);
+}
+
+async function materializeReadScope(readScope) {
+  const sourceRoot = await realpath(process.cwd());
+  const rootMetadata = await lstat(sourceRoot);
+  if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()) {
+    throw new TypeError("dispatch source workspace must be a physical directory");
+  }
+  if (!Array.isArray(readScope) || readScope.length === 0 || !readScope.every(safeScopePath)) {
+    throw new TypeError("dispatch read scope must contain explicit relative paths");
+  }
+  const workspace = await mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-scope-dispatch-"));
+  try {
+    for (const scope of [...new Set(readScope)].sort()) {
+      const source = resolve(sourceRoot, scope);
+      const withinRoot = relative(sourceRoot, source);
+      if (withinRoot === "" || withinRoot === ".." || withinRoot.startsWith(`..${sep}`)) {
+        throw new TypeError("dispatch read scope escapes source workspace");
+      }
+      await copyScopedEntry(source, join(workspace, scope));
+    }
+    return workspace;
+  } catch (error) {
+    await cleanupProbeArtifacts([workspace]);
+    throw error;
+  }
+}
+
 async function main() {
   const [, , command, ...args] = process.argv;
   const loaded = await dispatchPolicy();
@@ -150,16 +221,16 @@ async function main() {
   }
   if (command !== "plan" && command !== "run-isolated") throw new TypeError("unknown dispatch command");
 
-  const { packetPath, consume } = parsePacketArguments(args);
+  const { packetPath, consume, capabilityInput } = parsePacketArguments(args);
   const packet = await readOwnedPacket(packetPath, { consume });
   const decision = planDispatch({
     policy: loaded.policy,
     packet,
     capabilities: {
-      agentTypeVisible: true,
-      runtimeMetadataAvailable: true,
+      agentTypeVisible: capabilityInput.agentTypeVisible === true,
+      runtimeMetadataAvailable: capabilityInput.runtimeMetadataAvailable === true,
       bridgeRuntimeVerified: false,
-      permissionBypassActive: false,
+      permissionBypassActive: capabilityInput.permissionsEnforced !== true,
     },
     roleSpecs: ROLE_SPECS,
   });
@@ -178,18 +249,36 @@ async function main() {
   const task = JSON.stringify(stable(packet));
   if (sha256(task) !== decision.taskHash) throw new TypeError("dispatch task packet hash mismatch");
   let deliverable = null;
-  const result = await runIsolatedRole({
-    codexHome: CODEX_HOME,
-    roleSpec,
-    roleSource,
-    cwd: process.cwd(),
-    task,
-    taskHash: decision.taskHash,
-    onDeliverable: async (value) => {
-      deliverable = value;
-      return true;
-    },
-  });
+  const scopedWorkspace = await materializeReadScope(packet.readScope);
+  let result;
+  let scopedCleanupPassed = false;
+  try {
+    result = await runIsolatedRole({
+      codexBin: process.env.CODEX_BIN ?? "codex",
+      codexHome: CODEX_HOME,
+      roleSpec,
+      roleSource,
+      cwd: scopedWorkspace,
+      task,
+      taskHash: decision.taskHash,
+      onDeliverable: async (value) => {
+        deliverable = value;
+        return true;
+      },
+    });
+  } finally {
+    try {
+      await cleanupProbeArtifacts([scopedWorkspace]);
+      scopedCleanupPassed = true;
+    } catch {
+      scopedCleanupPassed = false;
+    }
+  }
+  if (!scopedCleanupPassed) {
+    result.checks.cleanupPassed = false;
+    result.pass = false;
+    result.rollbackRequired = true;
+  }
   if (result.pass !== true) {
     output({ status: "GEARBOX_DISPATCH_REJECTED", mode: loaded.state, decision, result });
     process.exitCode = 1;

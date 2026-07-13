@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -12,17 +12,22 @@ import {
   ROLE_SPECS,
   WORKFLOW_POLICY,
   cleanupProbeArtifacts,
+  DISPATCH_RUNTIME_FILES,
+  installDispatchRuntime,
+  rollbackDispatchRuntime,
   redactSensitive,
   removeOwnedSmokeProjectEntries,
   renderAgentsMd,
   renderConfig,
   rollbackConfig,
+  sha256,
   summarizeRollout,
   validateTypedSpawnArgs,
   validateRoleText,
   verifyProbe,
   writeJson,
 } from "../lib/gearbox.mjs";
+import { createDispatchPolicy, serializeDispatchPolicy } from "../lib/dispatch-policy.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -45,6 +50,24 @@ config_file = "/home/test/.codex/agents/terra-ultra-specialist.toml"
 command = "example"
 secret_value = "SECRET_KEEP"
 `;
+
+async function treeState(root) {
+  const entries = {};
+  async function visit(path) {
+    const metadata = await lstat(path);
+    const relativePath = path === root ? "." : path.slice(root.length + 1);
+    entries[relativePath] = {
+      type: metadata.isDirectory() ? "directory" : metadata.isFile() ? "file" : "other",
+      mode: metadata.mode & 0o777,
+      sha256: metadata.isFile() ? sha256(await readFile(path)) : null,
+    };
+    if (metadata.isDirectory()) {
+      for (const entry of (await readdir(path)).sort()) await visit(join(path, entry));
+    }
+  }
+  await visit(root);
+  return entries;
+}
 
 test("renderConfig adds only marker-delimited role and v2 blocks", () => {
   const output = renderConfig(CONFIG_FIXTURE, "/home/test/.codex");
@@ -233,6 +256,46 @@ test("managed dispatch runtime is bound into the installer and packaged with the
     wrapper,
     "#!/usr/bin/env bash\nset -euo pipefail\nCODEX_HOME_DIR=\"${CODEX_HOME:-${HOME}/.codex}\"\nexec node \"$CODEX_HOME_DIR/gearbox/runtime/scripts/gearbox-dispatch.mjs\" \"$@\"\n",
   );
+});
+
+test("dispatch runtime install reads back exact targets and rollback restores a temporary CODEX_HOME", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "gearbox-dispatch-install-"));
+  const backups = await mkdtemp(join(tmpdir(), "gearbox-dispatch-backups-"));
+  t.after(() => Promise.all([rm(home, { recursive: true, force: true }), rm(backups, { recursive: true, force: true })]));
+  const policy = serializeDispatchPolicy(createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null }));
+  await mkdir(join(home, "gearbox", "runtime", "lib"), { recursive: true, mode: 0o700 });
+  await mkdir(join(home, "bin"), { recursive: true, mode: 0o700 });
+  await writeFile(join(home, "gearbox", "dispatch-policy.json"), policy, { mode: 0o640 });
+  await writeFile(join(home, "gearbox", "runtime", "lib", "dispatch-planner.mjs"), "old runtime\n", { mode: 0o640 });
+  await writeFile(join(home, "bin", "gearbox-dispatch"), "old wrapper\n", { mode: 0o700 });
+  const before = await treeState(home);
+  const manifest = await installDispatchRuntime({
+    sourceRoot: REPO_ROOT,
+    codexHome: home,
+    backupDirectory: backups,
+    dispatchMode: "shadow",
+  });
+  assert.equal(manifest.policyMode, "shadow");
+  assert.equal(manifest.files.length, DISPATCH_RUNTIME_FILES.length + 2);
+  for (const entry of manifest.files) {
+    const metadata = await stat(entry.targetPath);
+    assert.equal(metadata.mode & 0o777, entry.mode);
+    assert.equal(sha256(await readFile(entry.targetPath)), entry.targetSha256);
+    assert.equal(entry.sourceSha256, entry.targetSha256);
+  }
+  const runtime = manifest.files.filter((entry) => entry.kind === "dispatch-runtime");
+  assert.equal(runtime.length, DISPATCH_RUNTIME_FILES.length);
+  assert.ok(runtime.every((entry) => entry.mode === 0o644));
+  assert.equal(manifest.files.find((entry) => entry.kind === "dispatch-wrapper").mode, 0o755);
+  assert.equal(manifest.files.find((entry) => entry.kind === "dispatch-policy").mode, 0o600);
+
+  await chmod(runtime[0].targetPath, 0o600);
+  await assert.rejects(rollbackDispatchRuntime({ manifest }), /mode drift/);
+  await chmod(runtime[0].targetPath, 0o644);
+  await writeFile(runtime[0].targetPath, "content drift\n");
+  await assert.rejects(rollbackDispatchRuntime({ manifest }), /content drift/);
+  await rollbackDispatchRuntime({ manifest, force: true });
+  assert.deepEqual(await treeState(home), before);
 });
 
 test("redactSensitive removes sensitive payloads but retains usage counts", () => {

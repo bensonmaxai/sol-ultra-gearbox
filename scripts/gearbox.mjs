@@ -30,6 +30,7 @@ import {
   cleanupProbeArtifacts,
   findProbeRollouts,
   hashTree,
+  installDispatchRuntime,
   readOptional,
   redactSensitive,
   removeOwnedSmokeProjectEntries,
@@ -37,6 +38,7 @@ import {
   renderConfig,
   restoreBackup,
   rollbackConfig,
+  rollbackDispatchRuntime,
   sha256,
   validateRoleText,
   verifyProbe,
@@ -943,8 +945,16 @@ async function rollbackFromManifest(manifestPath, { force = false, reason = null
   if (!force && manifest.agents.afterSha256 && sha256(currentAgents) !== manifest.agents.afterSha256) {
     throw new Error("AGENTS.md changed after installation; refusing rollback without --force");
   }
+  const dispatchEntries = manifest.files.filter((entry) => entry.kind?.startsWith("dispatch-"));
   for (const entry of manifest.files) {
     if (force || !entry.afterSha256) continue;
+    const metadata = await lstat(entry.targetPath);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) {
+      throw new Error(`managed file is no longer a regular file: ${entry.targetPath}`);
+    }
+    if (entry.mode !== undefined && (metadata.mode & 0o777) !== entry.mode) {
+      throw new Error(`managed file mode changed after installation: ${entry.targetPath}`);
+    }
     const current = await readOptional(entry.targetPath);
     if (current === null || sha256(current) !== entry.afterSha256) {
       throw new Error(`managed file changed after installation: ${entry.targetPath}`);
@@ -961,6 +971,7 @@ async function rollbackFromManifest(manifestPath, { force = false, reason = null
     await restoreBackup(manifest.agents.backup, manifest.timestamp),
   );
   for (const entry of manifest.files) {
+    if (entry.kind?.startsWith("dispatch-")) continue;
     if (entry.removeOnRollback && !entry.backup.existed) {
       try {
         await unlink(entry.targetPath);
@@ -972,6 +983,13 @@ async function rollbackFromManifest(manifestPath, { force = false, reason = null
     } else {
       actions.push(await restoreBackup(entry.backup, manifest.timestamp));
     }
+  }
+  if (dispatchEntries.length > 0) {
+    await rollbackDispatchRuntime({
+      manifest: { codexHome: CODEX_HOME, files: dispatchEntries },
+      force: true,
+    });
+    actions.push({ path: join(CODEX_HOME, "gearbox", "runtime"), action: "dispatch_runtime_restored" });
   }
   manifest.status = reason ? "failed_rolled_back" : "rolled_back";
   manifest.rollback = {
@@ -996,32 +1014,6 @@ async function readManagedPolicyTarget(path) {
   }
   const source = await readFile(path, "utf8");
   return assertManagedPolicyTarget(source);
-}
-
-function dispatchInstallEntries() {
-  return [
-    {
-      kind: "dispatch-policy",
-      sourcePath: null,
-      targetPath: join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH),
-      mode: 0o600,
-      removeOnRollback: true,
-    },
-    ...DISPATCH_RUNTIME_FILES.map((path) => ({
-      kind: "dispatch-runtime",
-      sourcePath: join(REPO_ROOT, path),
-      targetPath: join(CODEX_HOME, "gearbox", "runtime", path),
-      mode: 0o644,
-      removeOnRollback: true,
-    })),
-    {
-      kind: "dispatch-wrapper",
-      sourcePath: join(REPO_ROOT, "scripts", "gearbox-dispatch"),
-      targetPath: join(CODEX_HOME, "bin", "gearbox-dispatch"),
-      mode: 0o755,
-      removeOnRollback: true,
-    },
-  ];
 }
 
 async function installAfterSmoke(smoke, { dispatchMode = null } = {}) {
@@ -1086,20 +1078,13 @@ async function installAfterSmoke(smoke, { dispatchMode = null } = {}) {
     backup: launcherBackup,
   });
   if (policySource !== null) {
-    for (const entry of dispatchInstallEntries()) {
-      const source = entry.kind === "dispatch-policy"
-        ? policySource
-        : await readFile(entry.sourcePath, "utf8");
-      const backup = await backupFile(entry.targetPath, backupDirectory);
-      fileEntries.push({
-        ...entry,
-        afterSha256: sha256(source),
-        sourceSha256: sha256(source),
-        targetSha256: sha256(source),
-        policyMode: entry.kind === "dispatch-policy" ? policy.mode : null,
-        backup,
-      });
-    }
+    const dispatchInstall = await installDispatchRuntime({
+      sourceRoot: REPO_ROOT,
+      codexHome: CODEX_HOME,
+      backupDirectory,
+      dispatchMode,
+    });
+    fileEntries.push(...dispatchInstall.files);
   }
 
   const manifestPath = join(reportDirectory, "install-manifest.json");
@@ -1135,6 +1120,7 @@ async function installAfterSmoke(smoke, { dispatchMode = null } = {}) {
 
   try {
     for (const entry of fileEntries) {
+      if (entry.kind.startsWith("dispatch-")) continue;
       const source = entry.kind === "dispatch-policy"
         ? policySource
         : await readFile(entry.sourcePath, "utf8");
