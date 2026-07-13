@@ -1,0 +1,33 @@
+{
+  "name": "sol-ultra-gearbox-launch-video",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone Remotion launch video for Sol Ultra Gearbox.",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/project.test.mjs",
+    "render:still": "node scripts/render.mjs still",
+    "render:bilingual": "node scripts/render.mjs bilingual",
+    "render:clean": "node scripts/render.mjs clean",
+    "copy:social": "node scripts/copy-social.mjs",
+    "xai:dry-run": "bash scripts/xai-dry-run.sh"
+  },
+  "dependencies": {
+    "@remotion/captions": "^4.0.390",
+    "@remotion/cli": "^4.0.390",
+    "@remotion/media": "^4.0.390",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "remotion": "^4.0.390"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

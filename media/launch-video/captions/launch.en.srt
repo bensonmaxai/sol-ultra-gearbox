@@ -1,0 +1,91 @@
+1
+00:00:00,000 --> 00:00:01,950
+Most AI agent workflows
+
+2
+00:00:01,950 --> 00:00:03,900
+trust what a model says it is.
+
+3
+00:00:03,900 --> 00:00:05,850
+Sol Ultra Gearbox verifies
+
+4
+00:00:05,850 --> 00:00:07,800
+what actually ran. It routes Codex work
+
+5
+00:00:07,800 --> 00:00:09,750
+to typed Sol, Terra, and Luna roles.
+
+6
+00:00:09,750 --> 00:00:11,700
+Then it checks the real model,
+
+7
+00:00:11,700 --> 00:00:13,650
+reasoning effort, sandbox, lineage,
+
+8
+00:00:13,650 --> 00:00:15,600
+token usage, and filesystem scope
+
+9
+00:00:15,600 --> 00:00:17,550
+from persisted runtime metadata.
+
+10
+00:00:17,550 --> 00:00:19,500
+If anything is missing or mismatched,
+
+11
+00:00:19,500 --> 00:00:21,450
+it fails closed.
+
+12
+00:00:21,450 --> 00:00:23,400
+The built-in doctor validates
+
+13
+00:00:23,400 --> 00:00:25,350
+six role profiles.
+
+14
+00:00:25,350 --> 00:00:27,300
+Dry-run previews global changes,
+
+15
+00:00:27,300 --> 00:00:29,250
+while managed apply includes rollback.
+
+16
+00:00:29,250 --> 00:00:31,200
+This release passed twenty-three tests
+
+17
+00:00:31,200 --> 00:00:33,150
+and a six-role runtime smoke test.
+
+18
+00:00:33,150 --> 00:00:35,100
+If your team needs multi-agent workflows
+
+19
+00:00:35,100 --> 00:00:37,050
+you can audit, reproduce,
+
+20
+00:00:37,050 --> 00:00:39,000
+and reverse,
+
+21
+00:00:39,000 --> 00:00:40,950
+try Sol Ultra Gearbox
+
+22
+00:00:40,950 --> 00:00:42,900
+on GitHub.
+
+23
+00:00:42,900 --> 00:00:45,000
+Audit. Reproduce. Reverse.
