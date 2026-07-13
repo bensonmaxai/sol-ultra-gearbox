@@ -31,6 +31,7 @@ import {
   ROLE_SPECS,
   atomicWrite,
   backupFile,
+  captureConfigRollbackState,
   cleanupProbeArtifacts,
   findRecentRollouts,
   findProbeRollouts,
@@ -42,11 +43,12 @@ import {
   renderAgentsMd,
   renderConfig,
   restoreBackup,
-  rollbackConfig,
   rollbackDispatchRuntime,
+  restoreConfigRollbackState,
   sha256,
   summarizeRollout,
   validateTypedSpawnArgs,
+  validatePostInstallRootRuntime,
   validateRoleText,
   verifyProbe,
   writeJson,
@@ -1338,7 +1340,7 @@ async function runAcceptanceAll({ roleSmoke = null } = {}) {
   return attachAcceptanceMetadata(report, { reportDirectory: directory });
 }
 
-async function postInstallRootSmoke({ requireUltra = false } = {}) {
+async function postInstallRootSmoke({ active = false } = {}) {
   const marker = "GLOBAL_V2_ROOT_OK";
   const startedAtMs = Date.now();
   const result = await runCommand(
@@ -1360,14 +1362,13 @@ async function postInstallRootSmoke({ requireUltra = false } = {}) {
   );
   const summary = await singleRootSummary(join(CODEX_HOME, "sessions"), REPO_ROOT, startedAtMs);
   const runtime = acceptanceRuntime(summary);
-  const runtimeMatches = !requireUltra || (runtime.model === "gpt-5.6-sol" && runtime.effort === "ultra");
+  const runtimeValidation = validatePostInstallRootRuntime(runtime, { active });
   return {
     pass:
       result.code === 0 &&
       !result.timedOut &&
       result.stdout.includes(marker) &&
-      runtime.persisted &&
-      runtimeMatches &&
+      runtimeValidation.pass &&
       !/reserved .*schema mismatch|HTTP 400/i.test(
         `${result.stdout}\n${result.stderr}`,
       ),
@@ -1378,16 +1379,47 @@ async function postInstallRootSmoke({ requireUltra = false } = {}) {
       `${result.stdout}\n${result.stderr}`,
     ),
     actual: runtime,
-    requiredRuntime: requireUltra ? { model: "gpt-5.6-sol", effort: "ultra" } : null,
+    runtimeChecks: runtimeValidation.checks,
+    requiredRuntime: runtimeValidation.requiredRuntime,
   };
 }
 
 async function rollbackFromManifest(manifestPath, { force = false, reason = null } = {}) {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const configPath = manifest.config.path;
   if (manifest.status === "rolled_back" || manifest.status === "failed_rolled_back") {
+    const configWasHandled = (manifest.rollback?.actions ?? []).some(
+      (action) => action?.path === configPath,
+    );
+    if (configWasHandled) return manifest;
+    const currentConfig = await readFile(configPath, "utf8");
+    if (sha256(currentConfig) === manifest.config.beforeSha256) return manifest;
+    if (!force) {
+      throw new Error(
+        "Legacy rollback did not restore config.toml; rerun with --force for hash-bound recovery",
+      );
+    }
+    const recovered = restoreConfigRollbackState(currentConfig, {
+      rollbackState: manifest.config.rollbackState ?? null,
+      expectedSha256: manifest.config.beforeSha256,
+      codexHome: dirname(configPath),
+    });
+    await atomicWrite(
+      configPath,
+      recovered.source,
+      manifest.config.mode ?? 0o600,
+    );
+    manifest.rollback.actions.push({
+      path: configPath,
+      action: "managed_config_recovered",
+      strategy: recovered.strategy,
+      exact: recovered.exact,
+      sha256: sha256(recovered.source),
+    });
+    manifest.rollback.configRecoveredAt = new Date().toISOString();
+    await writeJson(manifestPath, manifest);
     return manifest;
   }
-  const configPath = manifest.config.path;
   const agentsPath = manifest.agents.path;
   const currentConfig = await readFile(configPath, "utf8");
   const currentAgents = await readFile(agentsPath, "utf8");
@@ -1413,12 +1445,24 @@ async function rollbackFromManifest(manifestPath, { force = false, reason = null
     }
   }
 
+  const restoredConfig = restoreConfigRollbackState(currentConfig, {
+    rollbackState: manifest.config.rollbackState ?? null,
+    expectedSha256: manifest.config.beforeSha256,
+    codexHome: dirname(configPath),
+    allowHashMismatch: force && reason === null,
+  });
   await atomicWrite(
     configPath,
-    rollbackConfig(currentConfig),
+    restoredConfig.source,
     manifest.config.mode ?? 0o600,
   );
-  const actions = [];
+  const actions = [{
+    path: configPath,
+    action: "managed_config_restored",
+    strategy: restoredConfig.strategy,
+    exact: restoredConfig.exact,
+    sha256: sha256(restoredConfig.source),
+  }];
   actions.push(
     await restoreBackup(manifest.agents.backup, manifest.timestamp),
   );
@@ -1507,6 +1551,15 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
   const configSource = await readFile(configPath, "utf8");
   const agentsSource = await readFile(agentsPath, "utf8");
   const configTarget = renderConfig(configSource, CODEX_HOME, { promoteV2: true });
+  const configRollbackState = captureConfigRollbackState(configSource);
+  const rollbackPreview = restoreConfigRollbackState(configTarget, {
+    rollbackState: configRollbackState,
+    expectedSha256: sha256(configSource),
+    codexHome: CODEX_HOME,
+  });
+  if (!rollbackPreview.exact || rollbackPreview.source !== configSource) {
+    throw new Error("Config rollback preflight failed");
+  }
   const agentsTarget = renderAgentsMd(agentsSource);
   const configMode = (await stat(configPath)).mode & 0o777;
   const agentsMode = (await stat(agentsPath)).mode & 0o777;
@@ -1569,6 +1622,7 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
       beforeSha256: sha256(configSource),
       afterSha256: sha256(configTarget),
       mode: configMode,
+      rollbackState: configRollbackState,
       managedMarkers: [
         CONFIG_LEGACY_THREADS_MARKER,
         CONFIG_ROLES_MARKER,
@@ -1615,17 +1669,19 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
       mcpConfig: doctorJson?.checks?.["mcp.config"]?.status === "ok",
       installation: doctorJson?.checks?.installation?.status === "ok",
     };
+    manifest.staticChecks = staticChecks;
+    await writeJson(manifestPath, manifest);
     if (!Object.values(staticChecks).every(Boolean)) {
       throw new Error("Post-install static checks failed");
     }
 
-    const rootSmoke = await postInstallRootSmoke({ requireUltra: dispatchMode === "active" });
+    const rootSmoke = await postInstallRootSmoke({ active: dispatchMode === "active" });
+    manifest.postInstallRootSmoke = rootSmoke;
+    await writeJson(manifestPath, manifest);
     if (!rootSmoke.pass) throw new Error("Post-install fresh-root smoke failed");
 
     manifest.status = "applied";
     manifest.completedAt = new Date().toISOString();
-    manifest.staticChecks = staticChecks;
-    manifest.postInstallRootSmoke = rootSmoke;
     await writeJson(manifestPath, manifest);
     await atomicWrite(
       join(reportDirectory, "result.md"),

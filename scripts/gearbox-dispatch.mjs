@@ -11,6 +11,7 @@ import {
   ROLE_SPECS,
   redactSensitive,
   sha256,
+  validatePostInstallRootRuntime,
 } from "../lib/gearbox.mjs";
 import { planDispatch } from "../lib/dispatch-planner.mjs";
 import { DISPATCH_POLICY_RELATIVE_PATH, loadDispatchPolicy } from "../lib/dispatch-policy.mjs";
@@ -190,9 +191,10 @@ async function activeManifestEvidence(policy) {
     if (manifest.staticChecks === null || typeof manifest.staticChecks !== "object" ||
       !["strictConfig", "configLoad", "mcpConfig", "installation"].every((key) => manifest.staticChecks[key] === true)) return null;
     if (manifest.postInstallRootSmoke?.pass !== true ||
-      manifest.postInstallRootSmoke?.actual?.persisted !== true ||
-      manifest.postInstallRootSmoke?.actual?.model !== "gpt-5.6-sol" ||
-      manifest.postInstallRootSmoke?.actual?.effort !== "ultra") return null;
+      !validatePostInstallRootRuntime(
+        manifest.postInstallRootSmoke?.actual,
+        { active: true },
+      ).pass) return null;
     if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.files)) return null;
 
     const installedDigest = async (path, mode, expectedHashes) => {

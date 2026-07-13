@@ -307,13 +307,19 @@ test("active policy requires its applied manifest before planning", async (t) =>
   const policy = JSON.parse(await readFile(join(home, "gearbox", "dispatch-policy.json"), "utf8"));
   const manifestSource = await readFile(policy.activation.manifestPath, "utf8");
   const manifest = JSON.parse(manifestSource);
+  const maxRootManifest = structuredClone(manifest);
+  maxRootManifest.postInstallRootSmoke.actual.effort = "max";
+  await writeFile(policy.activation.manifestPath, `${JSON.stringify(maxRootManifest)}\n`, { mode: 0o600 });
+  const maxRootStatus = jsonOnly(await run(["status"], { CODEX_HOME: home }));
+  assert.equal(maxRootStatus.mode, "active");
+  assert.equal(maxRootStatus.integrity, "pass");
   for (const mutate of [
     (value) => { value.status = "applying"; },
     (value) => { value.activation.acceptanceBindingSha256 = "invalid"; },
     (value) => { value.files[0].mode = 0o644; },
     (value) => { value.files.push({ ...value.files[0] }); },
     (value) => { value.staticChecks.configLoad = false; },
-    (value) => { value.postInstallRootSmoke.actual.effort = "max"; },
+    (value) => { value.postInstallRootSmoke.actual.effort = "high"; },
   ]) {
     const drift = structuredClone(manifest);
     mutate(drift);

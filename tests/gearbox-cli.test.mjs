@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
-import { sha256 } from "../lib/gearbox.mjs";
+import {
+  renderConfig,
+  rollbackConfig,
+  sha256,
+} from "../lib/gearbox.mjs";
 
 const REPO_ROOT = resolve(new URL("..", import.meta.url).pathname);
 const CLI = join(REPO_ROOT, "scripts", "gearbox.mjs");
@@ -80,4 +84,51 @@ if (args[0] === "features" && args[1] === "list") {
   assert.equal(report.changes.dispatch.acceptanceRequired, true);
   assert.equal(report.changes.dispatch.acceptanceValidated, false);
   assert.deepEqual(after, before);
+});
+
+test("managed rollback force-recovers a legacy failed manifest by exact config hash", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "gearbox-cli-legacy-rollback-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const configPath = join(home, "config.toml");
+  const agentsPath = join(home, "AGENTS.md");
+  const base = `model = "gpt-5.6-sol"\nmodel_reasoning_effort = "max"\n\n[agents]\nmax_threads = 3\nmax_depth = 1\n\n[private_fixture]\nsecret_value = "SECRET_KEEP"\n`;
+  const previous = renderConfig(base, home)
+    .replace(
+      "max_concurrent_threads_per_session = 3",
+      "max_concurrent_threads_per_session = 2",
+    );
+  const stripped = rollbackConfig(renderConfig(previous, home));
+  await writeFile(configPath, stripped, { mode: 0o600 });
+  await writeFile(agentsPath, "# restored fixture\n", { mode: 0o600 });
+  const manifestPath = join(home, "reports", "failed", "install-manifest.json");
+  await mkdir(join(home, "reports", "failed"), { recursive: true });
+  await writeFile(manifestPath, `${JSON.stringify({
+    schemaVersion: 1,
+    timestamp: "legacy-fixture",
+    status: "failed_rolled_back",
+    config: {
+      path: configPath,
+      beforeSha256: sha256(previous),
+      afterSha256: sha256(renderConfig(previous, home)),
+      mode: 0o600,
+    },
+    agents: { path: agentsPath },
+    files: [],
+    rollback: { at: new Date().toISOString(), reason: "fixture", actions: [] },
+  }, null, 2)}\n`, { mode: 0o600 });
+
+  const result = await run(
+    ["rollback", "--manifest", manifestPath, "--force"],
+    { CODEX_HOME: home },
+  );
+  assert.equal(result.code, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /GEARBOX_ROLLBACK_FAILED_ROLLED_BACK/);
+  assert.equal(await readFile(configPath, "utf8"), previous);
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const recovery = manifest.rollback.actions.find((action) => action.path === configPath);
+  assert.equal(recovery.action, "managed_config_recovered");
+  assert.equal(recovery.strategy, "legacy_v2_hash_match");
+  assert.equal(recovery.exact, true);
+  assert.equal(recovery.sha256, sha256(previous));
+  assert.doesNotMatch(JSON.stringify(manifest), /SECRET_KEEP/);
 });

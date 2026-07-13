@@ -63,6 +63,10 @@ automatic route or the default upgrade from `terra_worker`.
 - Stop after the first failed role. Do not retry a cost-bearing smoke test.
 - Back up and marker-manage every global write so rollback does not replace an
   unrelated complete config file.
+- Capture only the previous Gearbox-owned marker blocks and their bound hash.
+  Automatic rollback must restore those blocks exactly; a forced manual
+  rollback may preserve unrelated post-install config edits without restoring
+  a complete `config.toml` backup.
 
 See [the risk gates](skills/sol-ultra-gearbox/references/risk-gates.md) for the
 full decision table.
@@ -267,6 +271,17 @@ manifest printed by the apply command:
 ```bash
 node scripts/gearbox.mjs rollback --manifest reports/<run>/install-manifest.json
 ```
+
+The post-install CLI probe requires persisted `gpt-5.6-sol` runtime metadata.
+Active mode accepts the verified Max or Ultra effort because the Desktop task's
+Ultra selection is task-local and is not inherited by a separate `codex exec`
+probe. The manifest records the actual effort; this gate does not claim that a
+Desktop task was opened in Ultra mode.
+
+Failed manifests retain privacy-safe static-check and fresh-root diagnostics.
+Rollback restores the previous Gearbox-owned blocks and verifies the bound
+pre-install hash. Legacy failed manifests without rollback-state metadata may
+be recovered only when a bounded reconstruction exactly matches that hash.
 
 Existing Codex tasks retain the tool schema captured at task start. Validate
 the `agent_type` surface again in a fresh task.

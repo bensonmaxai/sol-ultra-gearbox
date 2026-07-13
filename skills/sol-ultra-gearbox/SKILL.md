@@ -199,6 +199,17 @@ If post-install validation fails, require automatic rollback. For a later
 manual rollback, use the exact manifest path and avoid `--force` unless the
 owner accepts overwriting post-install drift.
 
+Persist privacy-safe post-install diagnostics before deciding success. Treat a
+fresh CLI root as valid for active mode only when runtime metadata proves
+`gpt-5.6-sol` at Max or Ultra effort. This validates the isolated CLI quality
+floor, not the task-local Desktop Ultra selection.
+
+Capture and restore only the prior Gearbox-owned config blocks, never a full
+user config. Require exact pre-install hash restoration for automatic rollback;
+a forced manual rollback may preserve unrelated drift. A legacy manifest may
+recover a missing prior block only when the bounded candidate exactly matches
+its recorded pre-install hash.
+
 Install this skill globally with `npm run skill:install -- --apply`. Refuse to
 overwrite unmanaged or locally modified skill folders. Uninstall only through
 the managed command; it disables the folder instead of deleting it.

@@ -57,6 +57,12 @@ manifest path. Only the managed rollback command may consume that manifest to
 alter global state. Do not publish a savings percentage or estimator until ten
 comparable root-inclusive real-work pairs exist.
 
+Before reporting an applied active policy, require a persisted fresh CLI root
+on `gpt-5.6-sol` at Max or Ultra effort. This is an isolated CLI quality-floor
+check; it does not prove the task-local Desktop mode. Persist privacy-safe root
+diagnostics before rollback. Restore the previous Gearbox-owned config blocks
+to the bound pre-install hash without restoring a complete user config.
+
 Q10 proves exact typed fields, distinct non-empty task messages, declared
 disjoint scope mapping, persisted child identity, lineage, markers, tokens, no
 writers or descendants, and an unchanged fixture. Persisted prompt text is not

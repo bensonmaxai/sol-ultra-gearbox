@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  ACTIVE_ROOT_EFFORTS,
   AGENTS_MARKER,
   CONFIG_LEGACY_THREADS_MARKER,
   CONFIG_ROLES_MARKER,
@@ -14,6 +15,7 @@ import {
   ROLE_SPECS,
   WORKFLOW_POLICY,
   atomicWrite,
+  captureConfigRollbackState,
   cleanupProbeArtifacts,
   DISPATCH_RUNTIME_FILES,
   RUNTIME_BINDING_FILES,
@@ -24,9 +26,11 @@ import {
   renderAgentsMd,
   renderConfig,
   rollbackConfig,
+  restoreConfigRollbackState,
   sha256,
   summarizeRollout,
   validateTypedSpawnArgs,
+  validatePostInstallRootRuntime,
   validateRoleText,
   verifyProbe,
   writeJson,
@@ -108,6 +112,92 @@ test("rollbackConfig removes only Gearbox-managed config", () => {
   assert.doesNotMatch(rolledBack, new RegExp(CONFIG_ROLES_MARKER));
   assert.doesNotMatch(rolledBack, new RegExp(CONFIG_V2_MARKER));
   assert.doesNotMatch(rolledBack, new RegExp(CONFIG_LEGACY_THREADS_MARKER));
+});
+
+test("managed rollback state restores a previous Gearbox config byte for byte", () => {
+  const previous = renderConfig(CONFIG_FIXTURE, "/home/test/.codex")
+    .replace(
+      "max_concurrent_threads_per_session = 3",
+      "max_concurrent_threads_per_session = 2",
+    );
+  const rollbackState = captureConfigRollbackState(previous);
+  assert.doesNotMatch(JSON.stringify(rollbackState), /SECRET_KEEP/);
+  const installed = renderConfig(previous, "/home/test/.codex");
+  const restored = restoreConfigRollbackState(installed, {
+    rollbackState,
+    expectedSha256: sha256(previous),
+    codexHome: "/home/test/.codex",
+  });
+  assert.equal(restored.strategy, "managed_state");
+  assert.equal(restored.source, previous);
+});
+
+test("forced managed rollback preserves unrelated post-install config drift", () => {
+  const rollbackState = captureConfigRollbackState(CONFIG_FIXTURE);
+  const installed = renderConfig(CONFIG_FIXTURE, "/home/test/.codex");
+  const drifted = `${installed.trimEnd()}\n\n[unrelated]\nkeep = true\n`;
+  const restored = restoreConfigRollbackState(drifted, {
+    rollbackState,
+    expectedSha256: sha256(CONFIG_FIXTURE),
+    codexHome: "/home/test/.codex",
+    allowHashMismatch: true,
+  });
+  assert.equal(restored.strategy, "managed_state");
+  assert.equal(restored.exact, false);
+  assert.match(restored.source, /^\[unrelated\]$/m);
+  assert.match(restored.source, /^keep = true$/m);
+  assert.match(restored.source, /SECRET_KEEP/);
+  assert.doesNotMatch(restored.source, new RegExp(CONFIG_V2_MARKER));
+});
+
+test("legacy failed rollback reconstructs the previous two-slot managed config by hash", () => {
+  const previous = renderConfig(CONFIG_FIXTURE, "/home/test/.codex")
+    .replace(
+      "max_concurrent_threads_per_session = 3",
+      "max_concurrent_threads_per_session = 2",
+    );
+  const stripped = rollbackConfig(renderConfig(previous, "/home/test/.codex"));
+  const restored = restoreConfigRollbackState(stripped, {
+    rollbackState: null,
+    expectedSha256: sha256(previous),
+    codexHome: "/home/test/.codex",
+  });
+  assert.equal(restored.strategy, "legacy_v2_hash_match");
+  assert.equal(restored.source, previous);
+  assert.throws(
+    () => restoreConfigRollbackState(stripped, {
+      rollbackState: null,
+      expectedSha256: "0".repeat(64),
+      codexHome: "/home/test/.codex",
+    }),
+    /expected pre-install config hash/,
+  );
+});
+
+test("post-install root runtime accepts persisted Sol Max or Ultra only in active mode", () => {
+  assert.deepEqual(ACTIVE_ROOT_EFFORTS, ["max", "ultra"]);
+  for (const effort of ACTIVE_ROOT_EFFORTS) {
+    assert.equal(validatePostInstallRootRuntime({
+      persisted: true,
+      model: "gpt-5.6-sol",
+      effort,
+    }, { active: true }).pass, true);
+  }
+  assert.equal(validatePostInstallRootRuntime({
+    persisted: true,
+    model: "gpt-5.6-sol",
+    effort: "high",
+  }, { active: true }).pass, false);
+  assert.equal(validatePostInstallRootRuntime({
+    persisted: true,
+    model: "gpt-5.6-terra",
+    effort: "ultra",
+  }, { active: true }).pass, false);
+  assert.equal(validatePostInstallRootRuntime({
+    persisted: false,
+    model: "gpt-5.6-sol",
+    effort: "ultra",
+  }, { active: true }).pass, false);
 });
 
 test("renderConfig refuses an unmanaged multi_agent_v2 table", () => {
