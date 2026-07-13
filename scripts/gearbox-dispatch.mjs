@@ -4,7 +4,14 @@ import { constants } from "node:fs";
 import { lstat, mkdir, mkdtemp, open, readdir, realpath, readFile, unlink } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { atomicWrite, cleanupProbeArtifacts, ROLE_SPECS, redactSensitive, sha256 } from "../lib/gearbox.mjs";
+import {
+  atomicWrite,
+  cleanupProbeArtifacts,
+  DISPATCH_RUNTIME_FILES,
+  ROLE_SPECS,
+  redactSensitive,
+  sha256,
+} from "../lib/gearbox.mjs";
 import { planDispatch } from "../lib/dispatch-planner.mjs";
 import { DISPATCH_POLICY_RELATIVE_PATH, loadDispatchPolicy } from "../lib/dispatch-policy.mjs";
 import { runIsolatedRole } from "../lib/dispatch-runner.mjs";
@@ -158,12 +165,13 @@ async function dispatchPolicy() {
   return loadDispatchPolicy(join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH));
 }
 
-async function activeManifestValid(policy) {
+async function activeManifestEvidence(policy) {
   const activation = policy?.activation;
   try {
+    if (policy?.mode !== "active" || policy?.allowTypedBridge !== false) return null;
     const manifestPath = activation?.manifestPath;
     const metadata = await lstat(manifestPath);
-    if (!metadata.isFile() || metadata.isSymbolicLink() || (metadata.mode & 0o022) !== 0) return false;
+    if (!metadata.isFile() || metadata.isSymbolicLink() || (metadata.mode & 0o022) !== 0) return null;
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     const repositoryRootInput = typeof manifest?.activation?.repositoryRoot === "string"
       ? resolve(manifest.activation.repositoryRoot)
@@ -177,24 +185,124 @@ async function activeManifestValid(policy) {
       ? resolve(repositoryRoot, fromRepositoryInput)
       : null;
     if (!repositoryRoot || !reportsRoot || reportsRoot !== join(repositoryRoot, "reports") || actual !== expectedActual ||
-      fromReports === null || fromReports === "" || fromReports === ".." || fromReports.startsWith(`..${sep}`)) return false;
-    if (manifest.status !== "applied" || manifest.activation?.installId !== activation.installId || manifest.activation?.manifestPath !== manifestPath || manifest.activation?.policySha256 !== policy.sha256 || !/^[a-f0-9]{64}$/.test(manifest.activation?.acceptanceBindingSha256 ?? "")) return false;
+      fromReports === null || fromReports === "" || fromReports === ".." || fromReports.startsWith(`..${sep}`)) return null;
+    if (manifest.status !== "applied" || manifest.activation?.installId !== activation.installId || manifest.activation?.manifestPath !== manifestPath || manifest.activation?.policySha256 !== policy.sha256 || !/^[a-f0-9]{64}$/.test(manifest.activation?.acceptanceBindingSha256 ?? "")) return null;
     if (manifest.staticChecks === null || typeof manifest.staticChecks !== "object" ||
-      !["strictConfig", "configLoad", "mcpConfig", "installation"].every((key) => manifest.staticChecks[key] === true)) return false;
+      !["strictConfig", "configLoad", "mcpConfig", "installation"].every((key) => manifest.staticChecks[key] === true)) return null;
     if (manifest.postInstallRootSmoke?.pass !== true ||
       manifest.postInstallRootSmoke?.actual?.persisted !== true ||
       manifest.postInstallRootSmoke?.actual?.model !== "gpt-5.6-sol" ||
-      manifest.postInstallRootSmoke?.actual?.effort !== "ultra") return false;
-    const policyPath = join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH);
-    const policyMetadata = await lstat(policyPath);
-    if (!policyMetadata.isFile() || policyMetadata.isSymbolicLink() || (policyMetadata.mode & 0o777) !== 0o600) return false;
-    const source = await readFile(policyPath, "utf8");
-    const files = manifest.files?.filter((entry) => entry.kind === "dispatch-policy" && entry.targetPath === policyPath) ?? [];
-    if (files.length !== 1) return false;
-    const [file] = files;
-    return file?.mode === 0o600 && file?.afterSha256 === sha256(source) && file?.targetSha256 === sha256(source);
+      manifest.postInstallRootSmoke?.actual?.effort !== "ultra") return null;
+    if (manifest.schemaVersion !== 1 || !Array.isArray(manifest.files)) return null;
+
+    const installedDigest = async (path, mode, expectedHashes) => {
+      if (!Number.isInteger(mode) || (mode & 0o022) !== 0 ||
+        !Array.isArray(expectedHashes) || expectedHashes.length === 0) return null;
+      const installed = await lstat(path);
+      if (!installed.isFile() || installed.isSymbolicLink() || (installed.mode & 0o777) !== mode) return null;
+      const digest = sha256(await readFile(path));
+      return expectedHashes.every((value) => value === digest) ? digest : null;
+    };
+
+    if (manifest.config?.path !== join(CODEX_HOME, "config.toml") ||
+      manifest.agents?.path !== join(CODEX_HOME, "AGENTS.md")) return null;
+    const configSha256 = await installedDigest(
+      manifest.config.path,
+      manifest.config.mode,
+      [manifest.config.afterSha256],
+    );
+    const agentsSha256 = await installedDigest(
+      manifest.agents.path,
+      manifest.agents.mode,
+      [manifest.agents.afterSha256],
+    );
+    if (configSha256 === null || agentsSha256 === null) return null;
+
+    const roleFiles = manifest.files.filter((entry) => entry?.kind === "role");
+    if (roleFiles.length !== ROLE_SPECS.length) return null;
+    const roleHashes = {};
+    for (const spec of ROLE_SPECS) {
+      const targetPath = join(CODEX_HOME, "agents", spec.installFile);
+      const matches = roleFiles.filter((entry) =>
+        entry.role === spec.name && entry.targetPath === targetPath,
+      );
+      if (matches.length !== 1) return null;
+      const [entry] = matches;
+      if (entry.sourcePath !== join(repositoryRootInput, "roles", spec.sourceFile)) return null;
+      const digest = await installedDigest(targetPath, 0o644, [entry.afterSha256]);
+      if (digest === null) return null;
+      roleHashes[spec.name] = digest;
+    }
+
+    const launcherPath = join(CODEX_HOME, "bin", "codex-typed-agent");
+    const launcherFiles = manifest.files.filter((entry) =>
+      entry?.kind === "launcher" && entry.targetPath === launcherPath,
+    );
+    if (launcherFiles.length !== 1) return null;
+    const [launcher] = launcherFiles;
+    if (launcher.sourcePath !== join(repositoryRootInput, "scripts", "codex-typed-agent") ||
+      launcher.mode !== 0o755) return null;
+    const launcherSha256 = await installedDigest(
+      launcherPath,
+      0o755,
+      [launcher.sourceSha256, launcher.targetSha256, launcher.afterSha256],
+    );
+    if (launcherSha256 === null) return null;
+
+    const expected = [
+      {
+        kind: "dispatch-policy",
+        sourcePath: null,
+        targetPath: join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH),
+        mode: 0o600,
+        publicPath: null,
+      },
+      ...DISPATCH_RUNTIME_FILES.map((path) => ({
+        kind: "dispatch-runtime",
+        sourcePath: join(repositoryRootInput, path),
+        targetPath: join(CODEX_HOME, "gearbox", "runtime", path),
+        mode: 0o644,
+        publicPath: path,
+      })),
+      {
+        kind: "dispatch-wrapper",
+        sourcePath: join(repositoryRootInput, "scripts", "gearbox-dispatch"),
+        targetPath: join(CODEX_HOME, "bin", "gearbox-dispatch"),
+        mode: 0o755,
+        publicPath: "scripts/gearbox-dispatch",
+      },
+    ];
+    const dispatchFiles = manifest.files.filter((entry) => entry?.kind?.startsWith("dispatch-"));
+    if (dispatchFiles.length !== expected.length) return null;
+    const runtimeHashes = {};
+    for (const wanted of expected) {
+      const matches = dispatchFiles.filter((entry) =>
+        entry.kind === wanted.kind && entry.targetPath === wanted.targetPath,
+      );
+      if (matches.length !== 1) return null;
+      const [entry] = matches;
+      if (entry.sourcePath !== wanted.sourcePath || entry.mode !== wanted.mode) return null;
+      const digest = await installedDigest(
+        wanted.targetPath,
+        wanted.mode,
+        [entry.sourceSha256, entry.targetSha256, entry.afterSha256],
+      );
+      if (digest === null) return null;
+      if (wanted.kind === "dispatch-policy" && entry.policyMode !== "active") return null;
+      if (wanted.publicPath !== null) runtimeHashes[wanted.publicPath] = digest;
+    }
+    return {
+      integrity: "pass",
+      allowTypedBridge: false,
+      policySha256: policy.sha256,
+      configSha256,
+      agentsSha256,
+      roleHashes,
+      launcherSha256,
+      runtimeHashes,
+    };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -260,13 +368,20 @@ async function materializeReadScope(readScope) {
 async function main() {
   const [, , command, ...args] = process.argv;
   const loaded = await dispatchPolicy();
-  if (loaded.state === "off" || (loaded.state === "active" && !(await activeManifestValid(loaded.policy)))) {
+  const activeEvidence = loaded.state === "active"
+    ? await activeManifestEvidence(loaded.policy)
+    : null;
+  if (loaded.state === "off" || (loaded.state === "active" && activeEvidence === null)) {
     output(off());
     process.exitCode = 1;
     return;
   }
   if (command === "status" && args.length === 0) {
-    output({ status: `GEARBOX_DISPATCH_${loaded.state.toUpperCase()}`, mode: loaded.state });
+    output({
+      status: `GEARBOX_DISPATCH_${loaded.state.toUpperCase()}`,
+      mode: loaded.state,
+      ...(activeEvidence ?? {}),
+    });
     return;
   }
   if (command !== "plan" && command !== "run-isolated") throw new TypeError("unknown dispatch command");

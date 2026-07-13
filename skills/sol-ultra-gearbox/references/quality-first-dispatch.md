@@ -33,7 +33,7 @@ rejection.
 5. `typed_child`: Sol calls `spawn_agent` with exact typed arguments, waits, closes the child, and validates runtime evidence.
 6. `isolated_role_root`: run `gearbox-dispatch run-isolated`; it is an isolated root, never a child.
 7. Reject missing or mismatched evidence before integration.
-8. On a hard active-mode failure, stop delegation and use the signed policy activation manifest with the managed rollback command.
+8. On a hard active-mode failure, stop delegation and use the hash-bound policy activation manifest with the managed rollback command.
 9. Sol integrates, runs final relevant tests, records the privacy-safe outcome, and cleans the packet.
 
 The only shape names are `root_inline`, `typed_child`, `isolated_role_root`,
@@ -50,8 +50,9 @@ concrete local output defect. Identity, effort, sandbox, scope, permission,
 cleanup, policy, ambiguity, hidden-coupling, or security failure receives no
 retry.
 
-After a hard active-mode failure, stop delegation for the task. Dispatch status
-and public evidence redact the activation manifest path. Only the managed
-rollback command may consume that manifest to alter global state. Do not
-publish a savings percentage or estimator until ten comparable root-inclusive
-real-work pairs exist.
+After a hard active-mode failure, stop delegation for the task. Active status
+verifies managed configuration, AGENTS, role, launcher, runtime, and wrapper
+hashes and modes, while status and public evidence redact the activation
+manifest path. Only the managed rollback command may consume that manifest to
+alter global state. Do not publish a savings percentage or estimator until ten
+comparable root-inclusive real-work pairs exist.

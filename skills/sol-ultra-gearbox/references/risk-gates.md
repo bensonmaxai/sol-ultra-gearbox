@@ -33,7 +33,7 @@ and `active` may execute an approved decision. First active installation sets
 `allowTypedBridge=false`. One correction is allowed only for a concrete local
 output defect; identity, permission, scope, cleanup, policy, or ambiguity
 failure receives no retry. Hard active failures stop delegation and use only
-the signed activation manifest with the managed rollback command.
+the hash-bound activation manifest with the managed rollback command.
 
 ## Version changes
 

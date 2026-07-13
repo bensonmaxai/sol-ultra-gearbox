@@ -488,7 +488,7 @@ git commit -m "feat: add deterministic dispatch planner"
 - Create: `tests/dispatch-policy.test.mjs`
 
 **Interfaces:**
-- Produces: `createDispatchPolicy({ mode, allowTypedBridge, activation }) -> signed policy`
+- Produces: `createDispatchPolicy({ mode, allowTypedBridge, activation }) -> integrity-bound policy`
 - Produces: `serializeDispatchPolicy(policy) -> canonical JSON with newline`
 - Produces: `validateDispatchPolicy(policy) -> { pass, errors }`
 - Produces: `loadDispatchPolicy(path) -> { state, policy, error }`
@@ -510,7 +510,7 @@ import {
   validateDispatchPolicy,
 } from "../lib/dispatch-policy.mjs";
 
-test("active policy is canonical, signed, and bridge-disabled", () => {
+test("active policy is canonical, integrity-bound, and bridge-disabled", () => {
   const policy = createDispatchPolicy({
     mode: "active",
     allowTypedBridge: false,
@@ -559,7 +559,7 @@ Expected: FAIL with `ERR_MODULE_NOT_FOUND`.
 
 - [ ] **Step 3: Implement canonical signing and load-as-off behavior**
 
-Use a stable sorted JSON payload with exactly these signed fields:
+Use a stable sorted JSON payload with exactly these integrity-bound fields:
 
 ```js
 {
@@ -1041,7 +1041,7 @@ git commit -m "feat: run cheap read roles as isolated roots"
 
 - [ ] **Step 1: Write failing CLI tests against a temporary CODEX_HOME**
 
-Spawn the CLI with a signed shadow policy and valid packet. Assert `status`
+Spawn the CLI with an integrity-bound shadow policy and valid packet. Assert `status`
 returns shadow, `plan` returns the exact planner recommendation with
 `effectiveShape=root_inline`, `--consume` removes
 only a packet beneath an owned temp directory, and an arbitrary path is
@@ -1092,7 +1092,7 @@ runtime change.
    `active dispatch requires trusted acceptance evidence`.
 2. Refuse an existing invalid or unmanaged policy target.
 3. Back up the policy, wrapper, and every runtime file.
-4. Write a signed shadow policy with `allowTypedBridge=false` and
+4. Write an integrity-bound shadow policy with `allowTypedBridge=false` and
    `activation=null`.
 5. Copy the runtime tree with file mode `0644` and wrappers with `0755`.
 6. Record source/target hashes and policy mode in the install manifest.
@@ -1235,7 +1235,7 @@ Extend `installAfterSmoke` from Task 6 to accept
 `{ dispatchMode, acceptance }`. `dispatchMode="active"` is valid only when
 `validateTrustedAcceptance` passes against the current binding; the installed
 policy must still set `allowTypedBridge=false`. Before writing, create the
-ignored apply-manifest path and install ID, place both in the signed policy's
+ignored apply-manifest path and install ID, place both in the hash-bound policy's
 activation reference, and record the repository root plus policy hash in the
 manifest. This avoids a policy/manifest hash cycle while giving the active
 dispatcher one exact rollback target.
@@ -1329,7 +1329,7 @@ Document this sequence in the skill and managed `WORKFLOW_POLICY`:
 5. typed_child: Sol calls spawn_agent with exact typed args, waits, closes the child, and validates runtime evidence.
 6. isolated_role_root: run gearbox-dispatch run-isolated; never call it a child.
 7. Reject missing or mismatched evidence before integration.
-8. On a hard active-mode failure, stop delegation and use the signed policy's activation manifest with the managed rollback command.
+8. On a hard active-mode failure, stop delegation and use the hash-bound policy's activation manifest with the managed rollback command.
 9. Sol integrates, runs final relevant tests, records the privacy-safe outcome, and cleans the packet.
 ```
 

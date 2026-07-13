@@ -6,6 +6,7 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 import { createHash } from "node:crypto";
 import { createDispatchPolicy, serializeDispatchPolicy } from "../lib/dispatch-policy.mjs";
+import { DISPATCH_RUNTIME_FILES, ROLE_SPECS } from "../lib/gearbox.mjs";
 
 const REPO_ROOT = resolve(new URL("..", import.meta.url).pathname);
 const CLI = join(REPO_ROOT, "scripts", "gearbox-dispatch.mjs");
@@ -90,13 +91,92 @@ async function fixture(t, { policy = true, policyMode = "shadow" } = {}) {
     );
     if (policyMode === "active") {
       const digest = createHash("sha256").update(source).digest("hex");
+      const configPath = join(home, "config.toml");
+      const configSource = "model = \"gpt-5.6-sol\"\n";
+      const configDigest = createHash("sha256").update(configSource).digest("hex");
+      await writeFile(configPath, configSource, { mode: 0o600 });
+      const agentsPath = join(home, "AGENTS.md");
+      const agentsSource = "# Managed fixture\n";
+      const agentsDigest = createHash("sha256").update(agentsSource).digest("hex");
+      await writeFile(agentsPath, agentsSource, { mode: 0o644 });
+      const files = [{
+        kind: "dispatch-policy",
+        sourcePath: null,
+        targetPath: policyPath,
+        mode: 0o600,
+        sourceSha256: digest,
+        afterSha256: digest,
+        targetSha256: digest,
+        policyMode: "active",
+      }];
+      for (const spec of ROLE_SPECS) {
+        const roleSource = await readFile(join(REPO_ROOT, "roles", spec.sourceFile), "utf8");
+        const roleDigest = createHash("sha256").update(roleSource).digest("hex");
+        const targetPath = join(home, "agents", spec.installFile);
+        await mkdir(dirname(targetPath), { recursive: true, mode: 0o700 });
+        await writeFile(targetPath, roleSource, { mode: 0o644 });
+        files.push({
+          kind: "role",
+          role: spec.name,
+          sourcePath: join(home, "roles", spec.sourceFile),
+          targetPath,
+          afterSha256: roleDigest,
+        });
+      }
+      const launcherSource = await readFile(join(REPO_ROOT, "scripts", "codex-typed-agent"), "utf8");
+      const launcherDigest = createHash("sha256").update(launcherSource).digest("hex");
+      const launcherPath = join(home, "bin", "codex-typed-agent");
+      await mkdir(dirname(launcherPath), { recursive: true, mode: 0o700 });
+      await writeFile(launcherPath, launcherSource, { mode: 0o755 });
+      files.push({
+        kind: "launcher",
+        sourcePath: join(home, "scripts", "codex-typed-agent"),
+        targetPath: launcherPath,
+        mode: 0o755,
+        sourceSha256: launcherDigest,
+        afterSha256: launcherDigest,
+        targetSha256: launcherDigest,
+      });
+      for (const path of DISPATCH_RUNTIME_FILES) {
+        const runtimeSource = `runtime:${path}\n`;
+        const runtimeDigest = createHash("sha256").update(runtimeSource).digest("hex");
+        const targetPath = join(home, "gearbox", "runtime", path);
+        await mkdir(dirname(targetPath), { recursive: true, mode: 0o700 });
+        await writeFile(targetPath, runtimeSource, { mode: 0o644 });
+        files.push({
+          kind: "dispatch-runtime",
+          sourcePath: join(home, path),
+          targetPath,
+          mode: 0o644,
+          sourceSha256: runtimeDigest,
+          afterSha256: runtimeDigest,
+          targetSha256: runtimeDigest,
+        });
+      }
+      const wrapperSource = "#!/bin/sh\nexit 0\n";
+      const wrapperDigest = createHash("sha256").update(wrapperSource).digest("hex");
+      const wrapperPath = join(home, "bin", "gearbox-dispatch");
+      await mkdir(dirname(wrapperPath), { recursive: true, mode: 0o700 });
+      await writeFile(wrapperPath, wrapperSource, { mode: 0o755 });
+      files.push({
+        kind: "dispatch-wrapper",
+        sourcePath: join(home, "scripts", "gearbox-dispatch"),
+        targetPath: wrapperPath,
+        mode: 0o755,
+        sourceSha256: wrapperDigest,
+        afterSha256: wrapperDigest,
+        targetSha256: wrapperDigest,
+      });
       await mkdir(dirname(manifestPath), { recursive: true, mode: 0o700 });
       await writeFile(manifestPath, `${JSON.stringify({
+        schemaVersion: 1,
         status: "applied",
         activation: { installId: "fixture", manifestPath, repositoryRoot: home, policySha256: JSON.parse(source).sha256, acceptanceBindingSha256: "a".repeat(64) },
+        config: { path: configPath, mode: 0o600, afterSha256: configDigest },
+        agents: { path: agentsPath, mode: 0o644, afterSha256: agentsDigest },
         staticChecks: { strictConfig: true, configLoad: true, mcpConfig: true, installation: true },
         postInstallRootSmoke: { pass: true, actual: { persisted: true, model: "gpt-5.6-sol", effort: "ultra" } },
-        files: [{ kind: "dispatch-policy", targetPath: policyPath, mode: 0o600, afterSha256: digest, targetSha256: digest }],
+        files,
       })}\n`, { mode: 0o600 });
     }
   }
@@ -147,7 +227,7 @@ function jsonOnly(result) {
   return JSON.parse(result.stdout);
 }
 
-test("status and plan use a signed shadow policy and consume only the owned packet", async (t) => {
+test("status and plan use an integrity-bound shadow policy and consume only the owned packet", async (t) => {
   const { home, path } = await fixture(t);
   const status = jsonOnly(await run(["status"], { CODEX_HOME: home }));
   assert.deepEqual(status, { status: "GEARBOX_DISPATCH_SHADOW", mode: "shadow" });
@@ -210,7 +290,20 @@ test("missing policy fails closed before any packet is read or model is launched
 test("active policy requires its applied manifest before planning", async (t) => {
   const { home, path } = await fixture(t, { policyMode: "active" });
   const valid = await run(["status"], { CODEX_HOME: home });
-  assert.equal(jsonOnly(valid).mode, "active");
+  const activeStatus = jsonOnly(valid);
+  assert.equal(activeStatus.mode, "active");
+  assert.equal(activeStatus.integrity, "pass");
+  assert.equal(activeStatus.allowTypedBridge, false);
+  assert.match(activeStatus.policySha256, /^[a-f0-9]{64}$/);
+  assert.match(activeStatus.configSha256, /^[a-f0-9]{64}$/);
+  assert.match(activeStatus.agentsSha256, /^[a-f0-9]{64}$/);
+  assert.match(activeStatus.launcherSha256, /^[a-f0-9]{64}$/);
+  assert.deepEqual(Object.keys(activeStatus.roleHashes).sort(), ROLE_SPECS.map((spec) => spec.name).sort());
+  assert.deepEqual(
+    Object.keys(activeStatus.runtimeHashes).sort(),
+    [...DISPATCH_RUNTIME_FILES, "scripts/gearbox-dispatch"].sort(),
+  );
+  assert.doesNotMatch(valid.stdout, /manifestPath|install-manifest|\/Users\//);
   const policy = JSON.parse(await readFile(join(home, "gearbox", "dispatch-policy.json"), "utf8"));
   const manifestSource = await readFile(policy.activation.manifestPath, "utf8");
   const manifest = JSON.parse(manifestSource);
@@ -230,6 +323,47 @@ test("active policy requires its applied manifest before planning", async (t) =>
     assert.doesNotMatch(blocked.stdout, /manifest|acceptanceBinding|policySha256/);
   }
   await writeFile(policy.activation.manifestPath, manifestSource, { mode: 0o600 });
+  const runtimeEntry = manifest.files.find((entry) => entry.kind === "dispatch-runtime");
+  const runtimeSource = await readFile(runtimeEntry.targetPath, "utf8");
+  await writeFile(runtimeEntry.targetPath, `${runtimeSource}drift\n`);
+  assert.deepEqual(
+    jsonOnly(await run(["status"], { CODEX_HOME: home })),
+    { status: "GEARBOX_DISPATCH_OFF", mode: "off" },
+  );
+  await writeFile(runtimeEntry.targetPath, runtimeSource);
+  await chmod(runtimeEntry.targetPath, 0o600);
+  assert.deepEqual(
+    jsonOnly(await run(["status"], { CODEX_HOME: home })),
+    { status: "GEARBOX_DISPATCH_OFF", mode: "off" },
+  );
+  await chmod(runtimeEntry.targetPath, 0o644);
+  const wrapperEntry = manifest.files.find((entry) => entry.kind === "dispatch-wrapper");
+  await chmod(wrapperEntry.targetPath, 0o644);
+  assert.deepEqual(
+    jsonOnly(await run(["status"], { CODEX_HOME: home })),
+    { status: "GEARBOX_DISPATCH_OFF", mode: "off" },
+  );
+  await chmod(wrapperEntry.targetPath, 0o755);
+  const configSource = await readFile(manifest.config.path, "utf8");
+  await writeFile(manifest.config.path, `${configSource}drift = true\n`);
+  assert.deepEqual(
+    jsonOnly(await run(["status"], { CODEX_HOME: home })),
+    { status: "GEARBOX_DISPATCH_OFF", mode: "off" },
+  );
+  await writeFile(manifest.config.path, configSource);
+  await chmod(manifest.config.path, 0o620);
+  assert.deepEqual(
+    jsonOnly(await run(["status"], { CODEX_HOME: home })),
+    { status: "GEARBOX_DISPATCH_OFF", mode: "off" },
+  );
+  await chmod(manifest.config.path, 0o600);
+  const roleEntry = manifest.files.find((entry) => entry.kind === "role");
+  await chmod(roleEntry.targetPath, 0o600);
+  assert.deepEqual(
+    jsonOnly(await run(["status"], { CODEX_HOME: home })),
+    { status: "GEARBOX_DISPATCH_OFF", mode: "off" },
+  );
+  await chmod(roleEntry.targetPath, 0o644);
   await chmod(join(home, "gearbox", "dispatch-policy.json"), 0o644);
   const wrongMode = await run(["status"], { CODEX_HOME: home });
   assert.deepEqual(jsonOnly(wrongMode), { status: "GEARBOX_DISPATCH_OFF", mode: "off" });
@@ -251,7 +385,7 @@ test("active isolated execution materializes only allowed read scope and never r
   await writeFile(join(escape, "secret.txt"), "outside scope\n");
   await symlink(escape, join(source, "linked"));
   await writeFile(join(home, "auth.json"), "fixture auth\n");
-  await mkdir(join(home, "agents"));
+  await mkdir(join(home, "agents"), { recursive: true });
   await writeFile(join(home, "agents", "terra-explorer.toml"), await readFile(join(REPO_ROOT, "roles", "terra-explorer.toml"), "utf8"));
   const fake = await fakeCodex(join(home, "fake-codex.mjs"));
   await writeFile(path, `${JSON.stringify(packet({ readScope: ["allowed"] }))}\n`, { mode: 0o600 });

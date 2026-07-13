@@ -347,7 +347,7 @@ test("dispatch runtime install rolls back every target after a mid-write failure
   assert.deepEqual(await treeState(home), before);
 });
 
-test("active dispatch install requires a signed activation policy and remains rollback-safe", async (t) => {
+test("active dispatch install requires a hash-bound activation policy and remains rollback-safe", async (t) => {
   const home = await mkdtemp(join(tmpdir(), "gearbox-dispatch-active-"));
   const backups = await mkdtemp(join(tmpdir(), "gearbox-dispatch-active-backups-"));
   t.after(() => Promise.all([rm(home, { recursive: true, force: true }), rm(backups, { recursive: true, force: true })]));

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readdir } from "node:fs/promises";
 import test from "node:test";
 import {
   ACCEPTANCE_SCENARIOS,
@@ -33,7 +34,7 @@ function binding(overrides = {}) {
     gitHead: "a".repeat(40),
     gitStatus: "",
     codexVersion: "codex-cli 1.2.3",
-    configSha256: "b".repeat(64),
+    configSha256: sha256("config"),
     roleHashes: { luna_clerk: "c".repeat(64), terra_worker: "d".repeat(64) },
     runtimeHashes: { "lib/acceptance-exam.mjs": "e".repeat(64) },
     ...overrides,
@@ -155,7 +156,13 @@ test("production isolated executor accepts only its exact scenario deliverable",
       capabilities: { agentTypeVisible: true, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
       roleSpecs: ROLE_SPECS,
     });
-    const executeIsolatedRole = async ({ roleSpec, roleSource, taskHash, onDeliverable }) => {
+    const executeIsolatedRole = async ({ roleSpec, roleSource, cwd, taskHash, onDeliverable }) => {
+      assert.deepEqual(
+        await readdir(cwd),
+        scenario.id === "Q2_ISOLATED_LUNA"
+          ? ["records.txt"]
+          : ["trace-0.txt", "trace-1.txt", "trace-2.txt", "trace-3.txt", "trace-4.txt"],
+      );
       const accepted = await onDeliverable(deliverable);
       const checks = Object.fromEntries(REQUIRED_CHECKS.map((name) => [name, true]));
       checks.deliverableValid = accepted;
@@ -233,6 +240,9 @@ test("acceptance exam requires all ten current, persisted, cleaned results", asy
   assert.equal(Object.keys(decorated).includes("reportDirectory"), false);
   assert.equal(Object.keys(decorated).includes("reuse"), false);
   assert.equal(validateAcceptanceEvidence({ ...report, rawPrompt: "must not escape" }).pass, false);
+  const wrongConfigBinding = structuredClone(report);
+  wrongConfigBinding.runtimeBinding.configSha256 = "f".repeat(64);
+  assert.equal(validateAcceptanceEvidence(wrongConfigBinding).checks.configBinding, false);
   const leakedQuestion = structuredClone(report);
   leakedQuestion.questions[0].rawResult = { secret: true };
   assert.equal(validateAcceptanceEvidence(leakedQuestion).pass, false);

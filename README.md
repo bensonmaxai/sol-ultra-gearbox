@@ -133,7 +133,7 @@ only the managed rollback command can consume it to alter global state.
 The exact root workflow is: build packet, load policy, plan, complete
 `root_inline` in Sol or execute/validate the selected `typed_child` or
 `isolated_role_root`, reject missing evidence, stop and roll back through the
-signed manifest after a hard active failure, then let Sol integrate, test,
+hash-bound manifest after a hard active failure, then let Sol integrate, test,
 record a privacy-safe outcome, and clean the packet. See the
 [quality-first dispatch reference](skills/sol-ultra-gearbox/references/quality-first-dispatch.md)
 for the complete contract.
@@ -160,6 +160,10 @@ npm run acceptance
 node scripts/gearbox.mjs apply --promote-v2 --dispatch-mode active
 npm run dispatch:status
 ```
+
+An active status reports integrity `pass`, `allowTypedBridge=false`, the policy
+digest, and current managed configuration, role, launcher, and runtime hashes
+without exposing the manifest path.
 
 The dry run does not run model-backed probes or modify global configuration.
 `npm run acceptance` and the final active apply are paid, owner-authorized

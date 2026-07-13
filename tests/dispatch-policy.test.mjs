@@ -29,7 +29,7 @@ async function writePolicy(root, value) {
   return path;
 }
 
-test("active policy is canonical, signed, and bridge-disabled", () => {
+test("active policy is canonical, integrity-bound, and bridge-disabled", () => {
   const policy = activePolicy();
   assert.equal(validateDispatchPolicy(policy).pass, true);
   assert.equal(policy.managedBy, "sol-ultra-gearbox-v2");
@@ -50,7 +50,7 @@ test("active policy is canonical, signed, and bridge-disabled", () => {
   assert.equal(DISPATCH_POLICY_RELATIVE_PATH, "gearbox/dispatch-policy.json");
 });
 
-test("validation rejects fields and modes outside the signed schema", () => {
+test("validation rejects fields and modes outside the integrity schema", () => {
   const policy = activePolicy();
   const cases = [
     { ...policy, extra: true },

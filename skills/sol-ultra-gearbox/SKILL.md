@@ -104,7 +104,7 @@ For supported actual delegation, use this exact root workflow:
 5. `typed_child`: Sol calls `spawn_agent` with exact typed args, waits, closes the child, and validates runtime evidence.
 6. `isolated_role_root`: run `gearbox-dispatch run-isolated`; this is an isolated root, never a child.
 7. Reject missing or mismatched evidence before integration.
-8. On a hard active-mode failure, stop delegation and use the signed policy activation manifest with the managed rollback command.
+8. On a hard active-mode failure, stop delegation and use the hash-bound policy activation manifest with the managed rollback command.
 9. Sol integrates, runs final relevant tests, records the privacy-safe outcome, and cleans the packet.
 
 The execution shapes are `root_inline`, `typed_child`, `isolated_role_root`,
@@ -119,10 +119,12 @@ trusted runtime evidence fail closed to `root_inline`. Give a cheap role one
 initial attempt and at most one correction for a concrete local output defect;
 never retry identity, permission, scope, cleanup, policy, ambiguity, or hidden
 coupling failures. Active mode requires trusted current ten-question acceptance
-evidence and an applied manifest. Dispatch status and public
-evidence redact the local manifest path; only the managed rollback command may
-consume it to change global state. Do not claim a savings percentage before ten
-comparable root-inclusive real-work pairs exist.
+evidence and an applied manifest. Active dispatch status verifies managed
+configuration, AGENTS, role, launcher, runtime, and wrapper hashes and modes,
+reports the policy digest and `allowTypedBridge=false`, and redacts the local
+manifest path. Only the managed rollback command may consume it to change global
+state. Do not claim a savings percentage before ten comparable root-inclusive
+real-work pairs exist.
 
 ## Adapt skill-driven delegation
 

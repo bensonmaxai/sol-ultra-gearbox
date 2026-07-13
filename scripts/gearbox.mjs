@@ -396,9 +396,14 @@ export async function runAcceptanceIsolated(scenario, {
   let cleanup = false;
   let answer;
   try {
-    const records = Array.from({ length: 25 }, (_, index) => `record-${index + 1}`).join("\n");
-    await writeFile(join(fixture, "records.txt"), `${records}\n`, "utf8");
-    for (let index = 0; index < 5; index += 1) await writeFile(join(fixture, `trace-${index}.txt`), `trace ${index}\n`, "utf8");
+    if (roleName === "luna_clerk") {
+      const records = Array.from({ length: 25 }, (_, index) => `record-${index + 1}`).join("\n");
+      await writeFile(join(fixture, "records.txt"), `${records}\n`, "utf8");
+    } else {
+      for (let index = 0; index < 5; index += 1) {
+        await writeFile(join(fixture, `trace-${index}.txt`), `trace ${index}\n`, "utf8");
+      }
+    }
     const task = roleName === "luna_clerk"
       ? "Read only records.txt. Count its non-empty records. Return exactly one JSON object with no markdown and no extra keys: {\"count\":25}."
       : "Read only the five trace-*.txt files. Return exactly one JSON object with no markdown and the filenames sorted ascending under the sole key filenames: {\"filenames\":[\"trace-0.txt\",\"trace-1.txt\",\"trace-2.txt\",\"trace-3.txt\",\"trace-4.txt\"]}.";
