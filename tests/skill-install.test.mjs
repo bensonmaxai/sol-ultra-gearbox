@@ -19,6 +19,7 @@ async function fixture(t) {
     "agents/openai.yaml": "interface:\n  display_name: test\n",
     "references/risk-gates.md": "# Gates\n",
     "references/routing-matrix.md": "# Routing\n",
+    "references/subagent-skill-compatibility.md": "# Compatibility\n",
   };
   for (const [path, content] of Object.entries(files)) {
     await mkdir(dirname(join(source, path)), { recursive: true });
@@ -38,6 +39,9 @@ test("skill install is preview-only by default and idempotent after apply", asyn
   const status = await inspectSkillInstall({ source, target });
   assert.equal(status.state, "managed");
   assert.equal(status.upToDate, true);
+  assert.ok(
+    status.sourceFiles.includes("references/subagent-skill-compatibility.md"),
+  );
   const repeated = await installSkill({ source, target, apply: true });
   assert.equal(repeated.action, "up_to_date");
 });

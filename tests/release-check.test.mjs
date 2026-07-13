@@ -28,4 +28,5 @@ test("bundled skill documents Sol Max and the Terra Max opt-in role", async () =
   assert.match(source, /`terra_max_worker` as an explicit opt-in compatibility role/);
   assert.match(source, /Never select it automatically/);
   assert.match(source, /references\/routing-matrix\.md/);
+  assert.match(source, /references\/subagent-skill-compatibility\.md/);
 });

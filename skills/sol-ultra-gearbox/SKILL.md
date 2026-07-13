@@ -1,6 +1,6 @@
 ---
 name: sol-ultra-gearbox
-description: Audit, verify, install, route, and roll back Codex Sol root modes plus typed Terra and Luna subagent configurations. Use when working with Sol Max or Ultra, multi-agent model routing, custom agent TOML files, spawn_agent schema visibility, role smoke tests, cost evidence, global Gearbox installation, or fail-closed rollback.
+description: Audit, verify, install, route, and roll back Codex Sol root modes plus typed Terra and Luna subagent configurations. Use when working with Sol Max or Ultra, multi-agent model routing, workflow-skill spawn compatibility, custom agent TOML files, spawn_agent schema visibility, role smoke tests, cost evidence, global Gearbox installation, or fail-closed rollback.
 ---
 
 # Sol Ultra Gearbox
@@ -23,6 +23,11 @@ global write, or public release.
 
 Read [references/routing-matrix.md](references/routing-matrix.md) before model
 or effort selection, changing role defaults, or deciding between Max and Ultra.
+
+Read
+[references/subagent-skill-compatibility.md](references/subagent-skill-compatibility.md)
+before any workflow skill dispatches, delegates, fans out, or calls
+`spawn_agent`.
 
 ## Run the least costly gate
 
@@ -73,6 +78,31 @@ Inspect the `spawn_agent` schema exposed in the current task.
 - Refuse untyped children that would inherit the parent model.
 - Limit delegation to two direct children, depth 1, with no nested spawning.
 - Prefer read-only fan-out. Allow one writer per exclusive file scope.
+
+## Adapt skill-driven delegation
+
+Keep workflow skills active on the Sol root. They may own planning, task order,
+review loops, artifact handoffs, and acceptance criteria. Immediately before an
+actual child spawn, apply the compatibility gate:
+
+- do not select Sol Ultra merely because a workflow uses subagents; a known
+  sequential adapter may dispatch one typed child at a time from the lightest
+  sufficient Sol root;
+- translate generic implementer, explorer, clerk, and reviewer requests to a
+  known typed role;
+- preserve the workflow's semantics without inheriting its generic model or
+  agent defaults;
+- batch compatible independent work within the two-child limit;
+- keep external side effects, security findings, and final adjudication on the
+  Sol root;
+- fail closed for an unknown skill or an unresolvable conflict instead of
+  guessing a role or silently changing required concurrency.
+
+Use the compatibility matrix for the explicit
+`subagent-driven-development`, `dispatching-parallel-agents`,
+`requesting-code-review`, `security-scan`, and `security-diff-scan` adapters.
+The presence of words such as subagent, multi-agent, or spawn in documentation
+does not trigger the gate; an actual delegation intent does.
 
 ## Run live verification
 

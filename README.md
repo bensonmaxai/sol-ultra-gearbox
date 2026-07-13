@@ -63,6 +63,36 @@ automatic route or the default upgrade from `terra_worker`.
 See [the risk gates](skills/sol-ultra-gearbox/references/risk-gates.md) for the
 full decision table.
 
+## Skill-driven delegation compatibility
+
+Installed workflow skills remain available to the Sol root. Gearbox does not
+replace their planning, review, or artifact flow. Instead, immediately before
+an actual `spawn_agent` call, the managed policy applies a pre-spawn
+compatibility gate that:
+
+- keeps sequential skill adapters on the lightest sufficient Sol root and
+  reserves Sol Ultra for meaningful parallel workstreams;
+- translates generic implementer, explorer, clerk, and reviewer requests to
+  verified typed roles;
+- preserves `fork_turns="none"` and role-owned model, effort, and sandbox
+  settings;
+- batches compatible fan-out within the two-child and one-writer limits;
+- keeps security decisions, external side effects, and final adjudication on
+  the Sol root;
+- fails closed for unknown skills or incompatible requirements instead of
+  using an untyped or parent-inherited child.
+
+Known adapters cover Superpowers subagent-driven development, parallel
+dispatch, code review, and Codex Security repository or diff scans. Exact
+behavior, conflict handling, and unsupported workflow fallbacks are documented
+in the
+[subagent skill compatibility matrix](skills/sol-ultra-gearbox/references/subagent-skill-compatibility.md).
+
+This is an instruction-level pre-spawn policy gate, not a hook inside the Codex
+tool runtime. Static tests protect the managed policy and spawn-argument
+validator; persisted rollout metadata remains the authority for actual runtime
+identity.
+
 ## Requirements
 
 - Node.js 20 or newer
