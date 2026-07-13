@@ -81,6 +81,7 @@ test("valid packet selects an isolated Terra root for read-only permission misma
   assert.equal(decision.selectedShape, "isolated_role_root");
   assert.equal(decision.effectiveShape, "isolated_role_root");
   assert.equal(decision.role, "terra_explorer");
+  assert.equal(decision.responsibility, "exploration");
   assert.equal(
     decision.reasonCode,
     "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH",
@@ -118,6 +119,7 @@ test("planner keeps trivial, risky, unknown, and writer-mismatch work on Sol", (
     const decision = plan(value);
     assert.equal(decision.effectiveShape, "root_inline");
     assert.equal(decision.reasonCode, reasonCode);
+    assert.equal(decision.responsibility, value.responsibility);
     assert.equal(decision.spawnArgs, null);
   }
 });

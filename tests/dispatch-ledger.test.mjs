@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { chmod, mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { ROLE_SPECS } from "../lib/gearbox.mjs";
 import {
   appendDispatchRecord,
   createDispatchRecord,
   validateDispatchRecord,
 } from "../lib/dispatch-ledger.mjs";
+import { planDispatch } from "../lib/dispatch-planner.mjs";
 
 const taskHash = "a".repeat(64);
+const execFileAsync = promisify(execFile);
 
 function decision(overrides = {}) {
   return {
@@ -62,6 +67,73 @@ function record(overrides = {}) {
   };
 }
 
+function plannerPacket(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    workflowAdapter: "direct",
+    responsibility: "exploration",
+    goal: "Inspect the bounded fixture",
+    readScope: ["tests"],
+    writeScope: [],
+    knownFacts: ["The fixture is local"],
+    constraints: ["No writes"],
+    deliverable: "Evidence",
+    successCriteria: ["Bounded result"],
+    checks: ["Run focused test"],
+    prohibitedActions: ["No descendants"],
+    parentPermission: "read-only",
+    requiredPermission: "read-only",
+    requiresNativeLineage: false,
+    requestedRole: null,
+    ownerOptIn: false,
+    legacyAdapter: false,
+    batch: { requestedChildren: 1, writerCount: 0, scopesDisjoint: true },
+    riskSignals: {
+      ambiguous: false,
+      hiddenCoupling: false,
+      highRisk: false,
+      weakVerification: false,
+    },
+    costSignals: {
+      estimatedRootToolCalls: 5,
+      oneLocation: false,
+      packagingDominates: false,
+      directlyConsumable: true,
+      repetitiveReads: 3,
+      moduleCount: 1,
+      fileCount: 1,
+      bytes: 0,
+      lines: 0,
+      itemCount: 0,
+      includesRegressionTest: false,
+      boundedFileCount: 0,
+    },
+    ...overrides,
+  };
+}
+
+function plannedDecision(packet = plannerPacket()) {
+  return planDispatch({
+    policy: { mode: "active", allowTypedBridge: false },
+    packet,
+    capabilities: {
+      agentTypeVisible: true,
+      runtimeMetadataAvailable: true,
+      bridgeRuntimeVerified: false,
+      permissionBypassActive: false,
+    },
+    roleSpecs: ROLE_SPECS,
+  });
+}
+
+async function waitForReady(directory, count) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if ((await readdir(directory)).length === count) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("concurrent append workers did not reach the barrier");
+}
+
 test("createDispatchRecord creates an accepted typed-child public record", () => {
   const value = createDispatchRecord({
     decision: decision(),
@@ -74,6 +146,19 @@ test("createDispatchRecord creates an accepted typed-child public record", () =>
   assert.equal(validateDispatchRecord(value).pass, true);
   assert.deepEqual(Object.keys(value).sort(), Object.keys(record()).sort());
   assert.deepEqual(value.tokens, { parent: 120, child: 80, isolatedRoot: 0 });
+});
+
+test("createDispatchRecord accepts a real planner decision without raw task content", () => {
+  const value = createDispatchRecord({
+    decision: plannedDecision(),
+    result: result(),
+    workflowAdapter: "direct",
+    parentPermission: "read-only",
+    rootVerification: { pass: true },
+  });
+
+  assert.equal(value.responsibility, "exploration");
+  assert.equal(validateDispatchRecord(value).pass, true);
 });
 
 test("createDispatchRecord records root-inline work without child tokens", () => {
@@ -158,4 +243,65 @@ test("appendDispatchRecord validates before creating a ledger", async () => {
   const path = join(parent, "dispatch-ledger.jsonl");
   assert.throws(() => appendDispatchRecord(path, record({ prompt: "do not persist" })), /invalid dispatch record/);
   await assert.rejects(stat(path), { code: "ENOENT" });
+});
+
+test("appendDispatchRecord refuses an existing parent it does not own", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "dispatch-ledger-unowned-"));
+  const path = join(parent, "dispatch-ledger.jsonl");
+  await chmod(parent, 0o755);
+
+  assert.throws(() => appendDispatchRecord(path, record()), /owned 0700 directory/);
+  assert.equal((await stat(parent)).mode & 0o777, 0o755);
+});
+
+test("appendDispatchRecord retains every complete record from concurrent processes", async () => {
+  const root = await mkdtemp(join(tmpdir(), "dispatch-ledger-concurrent-"));
+  const parent = join(root, "ledger");
+  const ready = join(root, "ready");
+  const start = join(root, "start");
+  const path = join(parent, "dispatch-ledger.jsonl");
+  const count = 12;
+  await mkdir(parent, { mode: 0o700 });
+  await mkdir(ready, { mode: 0o700 });
+  const moduleUrl = new URL("../lib/dispatch-ledger.mjs", import.meta.url).href;
+  const worker = [
+    'const { appendDispatchRecord } = await import(process.env.LEDGER_MODULE);',
+    'import { existsSync, writeFileSync } from "node:fs";',
+    'writeFileSync(`${process.env.READY_DIR}/${process.env.RECORD_ID}`, "ready");',
+    'while (!existsSync(process.env.START_PATH)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);',
+    'appendDispatchRecord(process.env.LEDGER_PATH, JSON.parse(process.env.DISPATCH_RECORD));',
+  ].join("\n");
+  const workers = Array.from({ length: count }, (_, index) => {
+    const value = record({
+      taskHash: `${"a".repeat(63)}${index.toString(16)}`,
+      tokens: { parent: index, child: 0, isolatedRoot: 0 },
+    });
+    return execFileAsync(process.execPath, ["--input-type=module", "--eval", worker], {
+      env: {
+        ...process.env,
+        DISPATCH_RECORD: JSON.stringify(value),
+        LEDGER_MODULE: moduleUrl,
+        LEDGER_PATH: path,
+        READY_DIR: ready,
+        RECORD_ID: String(index),
+        START_PATH: start,
+      },
+    });
+  });
+
+  await waitForReady(ready, count);
+  await writeFile(start, "go");
+  await Promise.all(workers);
+
+  const lines = (await readFile(path, "utf8")).trimEnd().split("\n");
+  assert.equal(lines.length, count);
+  assert.deepEqual(
+    lines.map((line) => validateDispatchRecord(JSON.parse(line)).pass),
+    Array(count).fill(true),
+  );
+  assert.deepEqual(
+    new Set(lines.map((line) => JSON.parse(line).tokens.parent)),
+    new Set(Array.from({ length: count }, (_, index) => index)),
+  );
+  assert.deepEqual(await readdir(parent), ["dispatch-ledger.jsonl"]);
 });
