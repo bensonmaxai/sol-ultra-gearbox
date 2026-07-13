@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createFakeCodex } from "./helpers/fake-codex.mjs";
-import { ROLE_SPECS, sha256 } from "../lib/gearbox.mjs";
+import { ROLE_SPECS, cleanupProbeArtifacts, sha256 } from "../lib/gearbox.mjs";
 import {
   buildIsolatedRootArgs,
   parseRoleInstructions,
@@ -147,9 +147,45 @@ test("marker and consumer rejection are deliverable-only failures without rollba
     const marker = await runIsolatedRole({ codexBin: fake, codexHome: root, roleSpec: luna, roleSource, cwd, task, taskHash: sha256(task), env: { FAKE_CODEX_MODE: "marker_mismatch" }, onDeliverable: receiveDeliverable });
     assert.equal(marker.pass, false);
     assert.equal(marker.rollbackRequired, false);
+    let inlineDelivered = false;
+    const inlineMarker = await runIsolatedRole({ codexBin: fake, codexHome: root, roleSpec: luna, roleSource, cwd, task, taskHash: sha256(task), env: { FAKE_CODEX_MODE: "marker_inline" }, onDeliverable: async () => { inlineDelivered = true; return true; } });
+    assert.equal(inlineMarker.pass, false);
+    assert.equal(inlineMarker.rollbackRequired, false);
+    assert.equal(inlineDelivered, false);
     const rejected = await runIsolatedRole({ codexBin: fake, codexHome: root, roleSpec: luna, roleSource, cwd, task, taskHash: sha256(task), onDeliverable: async () => false });
     assert.equal(rejected.pass, false);
     assert.equal(rejected.rollbackRequired, false);
+  } finally { await rm(root, { recursive: true, force: true }); await rm(cwd, { recursive: true, force: true }); }
+});
+
+test("isolated runner exposes no deliverable until cleanup succeeds", async () => {
+  const root = await mkdtemp(join(tmpdir(), "dispatch-runner-cleanup-"));
+  const cwd = await mkdtemp(join(tmpdir(), "dispatch-runner-cleanup-work-"));
+  try {
+    const fake = await createFakeCodex(join(root, "fake-codex.mjs"));
+    await writeFile(join(root, "auth.json"), "fake-auth\n", "utf8");
+    let delivered = false;
+    const result = await runIsolatedRole({
+      codexBin: fake,
+      codexHome: root,
+      roleSpec: luna,
+      roleSource,
+      cwd,
+      task,
+      taskHash: sha256(task),
+      onDeliverable: async () => {
+        delivered = true;
+        return true;
+      },
+      cleanupArtifacts: async (paths) => {
+        await cleanupProbeArtifacts(paths);
+        throw new Error("synthetic cleanup failure after removal");
+      },
+    });
+    assert.equal(result.pass, false);
+    assert.equal(result.checks.cleanupPassed, false);
+    assert.equal(result.rollbackRequired, true);
+    assert.equal(delivered, false);
   } finally { await rm(root, { recursive: true, force: true }); await rm(cwd, { recursive: true, force: true }); }
 });
 

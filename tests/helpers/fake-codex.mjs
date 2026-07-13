@@ -38,7 +38,11 @@ else {
   await mkdir(sessionRoot, { recursive: true });
   const model = mode === "model_mismatch" ? "gpt-5.6-sol" : config("model");
   const calls = mode === "spawn" ? [{ name: "spawn_agent", arguments: "{}" }] : [];
-  const final = mode === "marker_mismatch" ? "WRONG_MARKER" : "{\\\"kind\\\":\\\"fake-deliverable\\\",\\\"value\\\":\\\"verified\\\"}\\n" + marker;
+  const final = mode === "marker_mismatch"
+    ? "WRONG_MARKER"
+    : mode === "marker_inline"
+      ? "{\\\"kind\\\":\\\"fake-deliverable\\\"} " + marker + " trailing"
+      : "{\\\"kind\\\":\\\"fake-deliverable\\\",\\\"value\\\":\\\"verified\\\"}\\n" + marker;
   const events = [
     { type: "session_meta", payload: { id: "fake-root", thread_source: mode === "source_mismatch" ? "subagent" : mode === "source_missing" ? null : "user", cwd } },
     { type: "turn_context", payload: { model, effort: mode === "effort_mismatch" ? "high" : config("model_reasoning_effort"), sandbox_policy: { type: mode === "sandbox_mismatch" ? "workspace-write" : valueAfter("-s") } } },
