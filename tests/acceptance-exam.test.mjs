@@ -136,6 +136,19 @@ test("scenario packets obtain their expected decision from the planner and rejec
   }), /acceptance scenario decision drift/);
 });
 
+test("every non-negative acceptance scenario obtains its declared planner decision", () => {
+  for (const scenario of ACCEPTANCE_SCENARIOS.filter((item) => item.negative !== true)) {
+    const decision = planAcceptanceScenario({
+      scenario,
+      policy: { mode: "active", allowTypedBridge: false },
+      capabilities: { agentTypeVisible: true, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
+      roleSpecs: ROLE_SPECS,
+    });
+    assert.equal(decision.selectedShape, scenario.selectedShape, scenario.id);
+    assert.equal(decision.reasonCode, scenario.reasonCode, scenario.id);
+  }
+});
+
 test("isolated acceptance deliverables require exact structured results", () => {
   assert.equal(validateAcceptanceDeliverable("Q2_ISOLATED_LUNA", '{"count":25}'), true);
   assert.equal(validateAcceptanceDeliverable("Q2_ISOLATED_LUNA", '{"count":"25"}'), false);
