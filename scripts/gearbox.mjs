@@ -26,6 +26,7 @@ import {
   CONFIG_ROLES_MARKER,
   CONFIG_V2_MARKER,
   DISPATCH_RUNTIME_FILES,
+  RUNTIME_BINDING_FILES,
   ROLE_SPECS,
   atomicWrite,
   backupFile,
@@ -79,16 +80,6 @@ const SMOKE_ROOT = Object.freeze({ model: "gpt-5.6-sol", effort: "max" });
 const APP_CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex";
 const CODEX_BIN =
   process.env.CODEX_BIN ?? (existsSync(APP_CODEX_BIN) ? APP_CODEX_BIN : "codex");
-const RUNTIME_BINDING_PATHS = Object.freeze([
-  "lib/gearbox.mjs",
-  "lib/runtime-evidence.mjs",
-  "lib/acceptance-exam.mjs",
-  "scripts/gearbox.mjs",
-  "scripts/codex-typed-agent",
-  ...DISPATCH_RUNTIME_FILES,
-  "scripts/gearbox-dispatch",
-]);
-
 function timestamp() {
   return new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 }
@@ -195,7 +186,7 @@ async function collectRuntimeBinding() {
     roleHashes[spec.name] = sha256(await readBoundSource(rolePath(spec)));
   }
   const runtimeHashes = {};
-  for (const path of RUNTIME_BINDING_PATHS) {
+  for (const path of RUNTIME_BINDING_FILES) {
     runtimeHashes[path] = sha256(
       await readBoundSource(join(REPO_ROOT, path)),
     );

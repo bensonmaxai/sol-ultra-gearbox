@@ -214,7 +214,7 @@ test("validateDispatchRecord rejects private fields and private home-path values
     assert.equal(validateDispatchRecord({ ...record(), [field]: "private" }).pass, false, field);
   }
   assert.equal(
-    validateDispatchRecord(record({ reasonCode: "ROOT_/Users/private-owner/task" })).pass,
+    validateDispatchRecord(record({ reasonCode: `ROOT_/${"Users"}/private-owner/task` })).pass,
     false,
   );
   assert.equal(

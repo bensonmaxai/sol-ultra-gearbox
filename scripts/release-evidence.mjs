@@ -13,7 +13,13 @@ import {
   validateLedger,
   validateObservedUsageReport,
 } from "../lib/cost-evidence.mjs";
-import { atomicWrite, ROLE_SPECS, sha256, writeJson } from "../lib/gearbox.mjs";
+import {
+  atomicWrite,
+  ROLE_SPECS,
+  RUNTIME_BINDING_FILES,
+  sha256,
+  writeJson,
+} from "../lib/gearbox.mjs";
 import {
   createRepositorySourceManifest,
   finalizeReleaseEvidence,
@@ -39,14 +45,6 @@ const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), ".codex");
 const APP_CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex";
 const CODEX_BIN =
   process.env.CODEX_BIN ?? (existsSync(APP_CODEX_BIN) ? APP_CODEX_BIN : "codex");
-const RUNTIME_BINDING_PATHS = Object.freeze([
-  "lib/gearbox.mjs",
-  "lib/runtime-evidence.mjs",
-  "lib/acceptance-exam.mjs",
-  "scripts/gearbox.mjs",
-  "scripts/codex-typed-agent",
-]);
-
 function runCommand(command, args, { cwd = REPO_ROOT } = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(command, args, {
@@ -118,7 +116,7 @@ async function collectCurrentRuntimeBinding() {
     roleHashes[role.name] = sha256(await readFile(join(REPO_ROOT, "roles", role.sourceFile)));
   }
   const runtimeHashes = {};
-  for (const path of RUNTIME_BINDING_PATHS) {
+  for (const path of RUNTIME_BINDING_FILES) {
     runtimeHashes[path] = sha256(await readFile(join(REPO_ROOT, path)));
   }
   return createRuntimeBinding({

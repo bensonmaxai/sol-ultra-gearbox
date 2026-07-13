@@ -3,10 +3,13 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { WORKFLOW_POLICY } from "../lib/gearbox.mjs";
-import { scanText } from "../lib/release-check.mjs";
+import { REQUIRED_RELEASE_FILES, scanText } from "../lib/release-check.mjs";
 
 const BUNDLED_SKILL = fileURLToPath(
   new URL("../skills/sol-ultra-gearbox/SKILL.md", import.meta.url),
+);
+const DISPATCH_LEDGER_TEST = fileURLToPath(
+  new URL("../tests/dispatch-ledger.test.mjs", import.meta.url),
 );
 
 test("release scanner accepts ordinary public text", () => {
@@ -16,6 +19,19 @@ test("release scanner accepts ordinary public text", () => {
 test("release scanner detects a private home path", () => {
   const value = "/" + "Users/private-owner/project";
   assert.match(scanText("file.txt", value)[0], /private macOS home path/);
+});
+
+test("release candidate requirements include the quality-first dispatch reference", () => {
+  assert.ok(
+    REQUIRED_RELEASE_FILES.includes(
+      "skills/sol-ultra-gearbox/references/quality-first-dispatch.md",
+    ),
+  );
+});
+
+test("dispatch-ledger fixture constructs its private path without embedding it in release text", async () => {
+  const source = await readFile(DISPATCH_LEDGER_TEST, "utf8");
+  assert.deepEqual(scanText("tests/dispatch-ledger.test.mjs", source), []);
 });
 
 test("release scanner detects common credential formats", () => {

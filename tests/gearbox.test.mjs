@@ -14,6 +14,7 @@ import {
   atomicWrite,
   cleanupProbeArtifacts,
   DISPATCH_RUNTIME_FILES,
+  RUNTIME_BINDING_FILES,
   installDispatchRuntime,
   rollbackDispatchRuntime,
   redactSensitive,
@@ -257,6 +258,26 @@ test("managed dispatch runtime is bound into the installer and packaged with the
     wrapper,
     "#!/usr/bin/env bash\nset -euo pipefail\nCODEX_HOME_DIR=\"${CODEX_HOME:-${HOME}/.codex}\"\nexec node \"$CODEX_HOME_DIR/gearbox/runtime/scripts/gearbox-dispatch.mjs\" \"$@\"\n",
   );
+});
+
+test("all runtime evidence collectors use the one exact unique source inventory", async () => {
+  assert.deepEqual(RUNTIME_BINDING_FILES, [
+    "lib/gearbox.mjs",
+    "lib/runtime-evidence.mjs",
+    "lib/acceptance-exam.mjs",
+    "scripts/gearbox.mjs",
+    "scripts/codex-typed-agent",
+    ...DISPATCH_RUNTIME_FILES,
+    "scripts/gearbox-dispatch",
+  ].filter((path, index, paths) => paths.indexOf(path) === index));
+  const [gearboxScript, releaseEvidenceScript] = await Promise.all([
+    readFile(join(REPO_ROOT, "scripts", "gearbox.mjs"), "utf8"),
+    readFile(join(REPO_ROOT, "scripts", "release-evidence.mjs"), "utf8"),
+  ]);
+  for (const source of [gearboxScript, releaseEvidenceScript]) {
+    assert.match(source, /RUNTIME_BINDING_FILES/);
+    assert.doesNotMatch(source, /const RUNTIME_BINDING_PATHS/);
+  }
 });
 
 test("dispatch runtime install reads back exact targets and rollback restores a temporary CODEX_HOME", async (t) => {
