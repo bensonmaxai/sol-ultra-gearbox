@@ -121,7 +121,7 @@ The following command launches real model-backed probes and consumes credits:
 npm run smoke
 ```
 
-Run it only with explicit owner approval. A pass requires all five roles to
+Run it only with explicit owner approval. A pass requires all six roles to
 match their expected role, model, effort, sandbox, depth, parent and child token
 metadata, marker, filesystem scope, no-descendant policy, and temporary-artifact
 cleanup. Raw reports are written under `reports/` and intentionally ignored by

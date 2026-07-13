@@ -154,6 +154,20 @@ test("all checked-in role files match their role specs", async () => {
   }
 });
 
+test("all six published roles participate in live smoke", () => {
+  assert.deepEqual(
+    ROLE_SPECS.filter((role) => role.smoke).map((role) => role.name),
+    [
+      "luna_clerk",
+      "terra_explorer",
+      "terra_worker",
+      "sol_reviewer",
+      "terra_ultra_specialist",
+      "terra_max_worker",
+    ],
+  );
+});
+
 test("redactSensitive removes sensitive payloads but retains usage counts", () => {
   const output = redactSensitive({
     token: "SECRET_TOKEN",
@@ -198,6 +212,7 @@ test("verifyProbe requires typed lineage, exact runtime settings, and no descend
   const spec = ROLE_SPECS.find((role) => role.name === "terra_worker");
   const parent = {
     sessionMeta: { id: "parent" },
+    turnContext: { model: "gpt-5.6-sol", effort: "max" },
     tokenUsage: { total_tokens: 200 },
     functionCalls: [
       {
@@ -238,15 +253,32 @@ test("verifyProbe requires typed lineage, exact runtime settings, and no descend
     parent,
     child,
     marker: "ROLE_PROBE_OK:terra_worker",
+    parentExpected: { model: "gpt-5.6-sol", effort: "max" },
   });
   assert.equal(result.pass, true);
+  assert.equal(result.checks.parentModelMatches, true);
+  assert.equal(result.checks.parentEffortMatches, true);
   assert.equal(result.checks.parentTokenUsagePersisted, true);
+
+  const wrongParentEffort = verifyProbe({
+    spec,
+    parent: {
+      ...parent,
+      turnContext: { ...parent.turnContext, effort: "high" },
+    },
+    child,
+    marker: "ROLE_PROBE_OK:terra_worker",
+    parentExpected: { model: "gpt-5.6-sol", effort: "max" },
+  });
+  assert.equal(wrongParentEffort.pass, false);
+  assert.equal(wrongParentEffort.checks.parentEffortMatches, false);
 
   const missingParentUsage = verifyProbe({
     spec,
     parent: { ...parent, tokenUsage: null },
     child,
     marker: "ROLE_PROBE_OK:terra_worker",
+    parentExpected: { model: "gpt-5.6-sol", effort: "max" },
   });
   assert.equal(missingParentUsage.pass, false);
   assert.equal(missingParentUsage.checks.parentTokenUsagePersisted, false);
@@ -261,6 +293,7 @@ test("verifyProbe requires typed lineage, exact runtime settings, and no descend
     },
     child,
     marker: "ROLE_PROBE_OK:terra_worker",
+    parentExpected: { model: "gpt-5.6-sol", effort: "max" },
   });
   assert.equal(untyped.pass, false);
   assert.equal(untyped.checks.typedRoleRequested, false);

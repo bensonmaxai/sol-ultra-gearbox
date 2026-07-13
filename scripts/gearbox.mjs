@@ -43,6 +43,7 @@ import {
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(SCRIPT_PATH), "..");
 const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), ".codex");
+const SMOKE_ROOT = Object.freeze({ model: "gpt-5.6-sol", effort: "max" });
 const APP_CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex";
 const CODEX_BIN =
   process.env.CODEX_BIN ?? (existsSync(APP_CODEX_BIN) ? APP_CODEX_BIN : "codex");
@@ -264,7 +265,10 @@ async function createProbeFixture(spec) {
     );
     task =
       "Inspect src/example.js and identify the exported symbol and returned value. Do not edit or create files. Do not spawn another agent.";
-  } else if (spec.name === "terra_worker") {
+  } else if (
+    spec.name === "terra_worker" ||
+    spec.name === "terra_max_worker"
+  ) {
     await writeFile(join(cwd, "worker-target.txt"), "BEFORE\n", "utf8");
     task =
       "Use apply_patch to change only worker-target.txt from BEFORE to AFTER, then verify the exact content. Do not touch any other file. Do not spawn another agent.";
@@ -338,9 +342,9 @@ async function runRoleProbe(spec) {
     "-c",
     `agents.${spec.name}.config_file=${JSON.stringify(rolePath(spec))}`,
     "-c",
-    'model="gpt-5.6-sol"',
+    `model=${JSON.stringify(SMOKE_ROOT.model)}`,
     "-c",
-    'model_reasoning_effort="max"',
+    `model_reasoning_effort=${JSON.stringify(SMOKE_ROOT.effort)}`,
     "-c",
     'plugins."superpowers@openai-curated".enabled=false',
     "-s",
@@ -378,11 +382,12 @@ async function runRoleProbe(spec) {
     parent: rollouts.parent,
     child: rollouts.child,
     marker: fixture.marker,
+    parentExpected: SMOKE_ROOT,
   });
   const after = await hashTree(fixture.cwd);
   const changedFiles = treeDiff(fixture.before, after);
   let filesystemPass;
-  if (spec.name === "terra_worker") {
+  if (spec.name === "terra_worker" || spec.name === "terra_max_worker") {
     const content = await readFile(join(fixture.cwd, "worker-target.txt"), "utf8");
     filesystemPass =
       changedFiles.length === 1 &&
@@ -444,7 +449,7 @@ function smokeMarkdown(report) {
       return `| ${item.role} | ${item.pass ? "PASS" : "FAIL"} | ${item.actual?.model ?? "n/a"} | ${item.actual?.effort ?? "n/a"} | ${item.actual?.sandbox ?? "n/a"} | ${parentTokens} | ${childTokens} |`;
     })
     .join("\n");
-  return `# Gearbox V2 Role Smoke\n\n- Generated: ${report.generatedAt}\n- Status: ${report.pass ? "PASS" : "FAIL"}\n- Global config unchanged: ${report.globalConfigUnchanged ? "yes" : "no"}\n- Policy: no retries; stop on first failure\n\n| Role | Status | Actual model | Effort | Sandbox | Parent tokens | Child tokens |\n|---|---|---|---|---|---:|---:|\n${rows}\n`;
+  return `# Gearbox V2 Role Smoke\n\n- Generated: ${report.generatedAt}\n- Status: ${report.pass ? "PASS" : "FAIL"}\n- Root runtime: ${report.rootRuntime.model} / ${report.rootRuntime.effort} (${report.rootRuntime.verified ? "verified" : "unverified"})\n- Global config unchanged: ${report.globalConfigUnchanged ? "yes" : "no"}\n- Policy: no retries; stop on first failure\n\n| Role | Status | Actual model | Effort | Sandbox | Parent tokens | Child tokens |\n|---|---|---|---|---|---:|---:|\n${rows}\n`;
 }
 
 async function runSmokeAll({ writeReport = true } = {}) {
@@ -471,6 +476,17 @@ async function runSmokeAll({ writeReport = true } = {}) {
       roles.every((item) => item.pass) &&
       globalConfigUnchanged,
     expectedRoleCount: ROLE_SPECS.filter((role) => role.smoke).length,
+    rootRuntime: {
+      model: SMOKE_ROOT.model,
+      effort: SMOKE_ROOT.effort,
+      verified:
+        roles.length === ROLE_SPECS.filter((role) => role.smoke).length &&
+        roles.every(
+          (item) =>
+            item.checks.parentModelMatches &&
+            item.checks.parentEffortMatches,
+        ),
+    },
     globalConfigUnchanged,
     globalConfigBeforeSha256:
       globalConfigBefore === null ? null : sha256(globalConfigBefore),
@@ -676,7 +692,7 @@ async function installAfterSmoke(smoke) {
     await writeJson(manifestPath, manifest);
     await atomicWrite(
       join(reportDirectory, "result.md"),
-      `# Gearbox V2 Apply Result\n\n- Status: PASS\n- Manifest: ${manifestPath}\n- Five-role smoke: PASS\n- Post-install fresh-root smoke: PASS\n- Current tasks retain their original tool schema; restart Codex and open a new task.\n`,
+      `# Gearbox V2 Apply Result\n\n- Status: PASS\n- Manifest: ${manifestPath}\n- ${smoke.expectedRoleCount}-role smoke: PASS\n- Root runtime: ${smoke.rootRuntime.model} / ${smoke.rootRuntime.effort} (${smoke.rootRuntime.verified ? "verified" : "unverified"})\n- Post-install fresh-root smoke: PASS\n- Current tasks retain their original tool schema; restart Codex and open a new task.\n`,
     );
     return { manifestPath, manifest };
   } catch (error) {
@@ -826,7 +842,7 @@ async function main() {
     const smoke = await runSmokeAll();
     if (!smoke.pass) {
       throw new Error(
-        `Five-role smoke failed; global config was not changed. Report: ${smoke.reportDirectory}`,
+        `${smoke.expectedRoleCount}-role smoke failed; global config was not changed. Report: ${smoke.reportDirectory}`,
       );
     }
     const result = await installAfterSmoke(smoke);
