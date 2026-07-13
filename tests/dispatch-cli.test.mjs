@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { createDispatchPolicy, serializeDispatchPolicy } from "../lib/dispatch-policy.mjs";
 
 const REPO_ROOT = resolve(new URL("..", import.meta.url).pathname);
@@ -76,14 +77,26 @@ async function fixture(t, { policy = true, policyMode = "shadow" } = {}) {
   t.after(() => Promise.all([rm(home, { recursive: true, force: true }), rm(owned, { recursive: true, force: true })]));
   if (policy) {
     await mkdir(join(home, "gearbox"), { recursive: true, mode: 0o700 });
+    const manifestPath = join(home, "reports", "fixture-acceptance", "install-manifest.json");
     const activation = policyMode === "active"
-      ? { installId: "fixture", manifestPath: "/tmp/fixture-manifest.json" }
+      ? { installId: "fixture", manifestPath }
       : null;
+    const policyPath = join(home, "gearbox", "dispatch-policy.json");
+    const source = serializeDispatchPolicy(createDispatchPolicy({ mode: policyMode, allowTypedBridge: false, activation }));
     await writeFile(
-      join(home, "gearbox", "dispatch-policy.json"),
-      serializeDispatchPolicy(createDispatchPolicy({ mode: policyMode, allowTypedBridge: false, activation })),
+      policyPath,
+      source,
       { mode: 0o600 },
     );
+    if (policyMode === "active") {
+      const digest = createHash("sha256").update(source).digest("hex");
+      await mkdir(dirname(manifestPath), { recursive: true, mode: 0o700 });
+      await writeFile(manifestPath, `${JSON.stringify({
+        status: "applied",
+        activation: { installId: "fixture", manifestPath, repositoryRoot: home, policySha256: JSON.parse(source).sha256, acceptanceBindingSha256: "a".repeat(64) },
+        files: [{ kind: "dispatch-policy", targetPath: policyPath, mode: 0o600, afterSha256: digest, targetSha256: digest }],
+      })}\n`, { mode: 0o600 });
+    }
   }
   const path = join(owned, "packet.json");
   await writeFile(path, `${JSON.stringify(packet())}\n`, { mode: 0o600 });
@@ -190,6 +203,16 @@ test("missing policy fails closed before any packet is read or model is launched
   assert.equal(result.code, 1);
   assert.deepEqual(jsonOnly(result), { status: "GEARBOX_DISPATCH_OFF", mode: "off" });
   await access(path);
+});
+
+test("active policy requires its applied manifest before planning", async (t) => {
+  const { home, path } = await fixture(t, { policyMode: "active" });
+  const valid = await run(["status"], { CODEX_HOME: home });
+  assert.equal(jsonOnly(valid).mode, "active");
+  const policy = JSON.parse(await readFile(join(home, "gearbox", "dispatch-policy.json"), "utf8"));
+  await writeFile(policy.activation.manifestPath, `${JSON.stringify({ status: "applying" })}\n`);
+  const blocked = await run(["plan", "--packet", path], { CODEX_HOME: home });
+  assert.deepEqual(jsonOnly(blocked), { status: "GEARBOX_DISPATCH_OFF", mode: "off" });
 });
 
 test("active isolated execution materializes only allowed read scope and never releases failed deliverables", async (t) => {

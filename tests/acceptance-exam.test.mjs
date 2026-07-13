@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ACCEPTANCE_SCENARIOS,
+  createAcceptancePacket,
+  planAcceptanceScenario,
   runAcceptanceExam,
 } from "../lib/acceptance-exam.mjs";
+import { ROLE_SPECS } from "../lib/gearbox.mjs";
 import { createRuntimeBinding } from "../lib/runtime-evidence.mjs";
 
 const EXPECTED = Object.freeze([
@@ -72,6 +75,25 @@ test("acceptance scenarios are the exact ordered ten-question contract", () => {
     ACCEPTANCE_SCENARIOS.map(({ id, selectedShape, reasonCode }) => [id, selectedShape, reasonCode]),
     EXPECTED,
   );
+});
+
+test("scenario packets obtain their expected decision from the planner and reject drift", () => {
+  const scenario = ACCEPTANCE_SCENARIOS[1];
+  const decision = planAcceptanceScenario({
+    scenario,
+    policy: { mode: "active", allowTypedBridge: false },
+    capabilities: { agentTypeVisible: true, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
+    roleSpecs: ROLE_SPECS,
+  });
+  assert.equal(createAcceptancePacket(scenario).responsibility, "mechanical");
+  assert.equal(decision.selectedShape, scenario.selectedShape);
+  assert.equal(decision.reasonCode, scenario.reasonCode);
+  assert.throws(() => planAcceptanceScenario({
+    scenario,
+    policy: { mode: "active", allowTypedBridge: false },
+    capabilities: { agentTypeVisible: false, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
+    roleSpecs: ROLE_SPECS,
+  }), /acceptance scenario decision drift/);
 });
 
 test("acceptance exam requires all ten current, persisted, cleaned results", async () => {

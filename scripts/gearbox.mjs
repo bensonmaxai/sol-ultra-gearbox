@@ -48,7 +48,7 @@ import {
   writeJson,
 } from "../lib/gearbox.mjs";
 import { runIsolatedRole } from "../lib/dispatch-runner.mjs";
-import { runAcceptanceExam } from "../lib/acceptance-exam.mjs";
+import { planAcceptanceScenario, runAcceptanceExam } from "../lib/acceptance-exam.mjs";
 import {
   assertManagedPolicyTarget,
   createDispatchPolicy,
@@ -1190,6 +1190,12 @@ async function runAcceptanceAll({ roleSmoke = null } = {}) {
       });
     },
     executeParallel: runAcceptanceParallel,
+    planScenario: (scenario) => planAcceptanceScenario({
+      scenario,
+      policy: { mode: "active", allowTypedBridge: false },
+      capabilities: { agentTypeVisible: true, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
+      roleSpecs: ROLE_SPECS,
+    }),
     onQuestion: (question) => process.stdout.write(`QUESTION ${question.id} ${question.pass ? "PASS" : "FAIL"}\n`),
   });
   const directory = join(REPO_ROOT, "reports", `${timestamp()}-acceptance`);
@@ -1556,11 +1562,8 @@ async function cleanupSmokeProjects(manifestPath) {
 }
 
 async function dryRunApply({ dispatchMode = null } = {}) {
-  if (dispatchMode === "active") {
-    throw new Error("active dispatch requires trusted acceptance evidence");
-  }
-  if (dispatchMode !== null && dispatchMode !== "shadow") {
-    throw new Error("dispatch mode must be shadow");
+  if (dispatchMode !== null && !["shadow", "active"].includes(dispatchMode)) {
+    throw new Error("dispatch mode must be shadow or active");
   }
   const doctor = await runDoctor();
   const configPath = join(CODEX_HOME, "config.toml");
@@ -1570,13 +1573,17 @@ async function dryRunApply({ dispatchMode = null } = {}) {
   const configTarget = renderConfig(configSource, CODEX_HOME, { promoteV2: true });
   const agentsTarget = renderAgentsMd(agentsSource);
   const dispatch = dispatchMode === null ? null : (() => {
-    const policy = createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null });
+    const policy = dispatchMode === "active"
+      ? createDispatchPolicy({ mode: "active", allowTypedBridge: false, activation: { installId: "preview", manifestPath: join(REPO_ROOT, "reports", "preview", "install-manifest.json") } })
+      : createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null });
     const policySource = serializeDispatchPolicy(policy);
     return {
       mode: policy.mode,
       policySha256: sha256(policySource),
       runtime: DISPATCH_RUNTIME_FILES.map((path) => ({ path, sha256: null })),
       wrapper: { path: "scripts/gearbox-dispatch", sha256: null },
+      acceptanceRequired: dispatchMode === "active",
+      acceptanceValidated: false,
     };
   })();
   if (dispatch !== null) {

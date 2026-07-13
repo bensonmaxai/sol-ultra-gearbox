@@ -158,6 +158,29 @@ async function dispatchPolicy() {
   return loadDispatchPolicy(join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH));
 }
 
+async function activeManifestValid(policy) {
+  const activation = policy?.activation;
+  try {
+    const manifestPath = activation?.manifestPath;
+    const metadata = await lstat(manifestPath);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) return false;
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    const repositoryRoot = typeof manifest?.activation?.repositoryRoot === "string" ? resolve(manifest.activation.repositoryRoot) : null;
+    const reportsRoot = repositoryRoot ? await realpath(join(repositoryRoot, "reports")) : null;
+    const actual = await realpath(manifestPath);
+    if (!repositoryRoot || !reportsRoot || !actual.startsWith(`${reportsRoot}${sep}`)) return false;
+    if (manifest.status !== "applied" || manifest.activation?.installId !== activation.installId || manifest.activation?.manifestPath !== manifestPath || manifest.activation?.policySha256 !== policy.sha256 || !/^[a-f0-9]{64}$/.test(manifest.activation?.acceptanceBindingSha256 ?? "")) return false;
+    const policyPath = join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH);
+    const policyMetadata = await lstat(policyPath);
+    if (!policyMetadata.isFile() || policyMetadata.isSymbolicLink()) return false;
+    const source = await readFile(policyPath, "utf8");
+    const file = manifest.files?.find((entry) => entry.kind === "dispatch-policy" && entry.targetPath === policyPath);
+    return file?.mode === 0o600 && file?.afterSha256 === sha256(source) && file?.targetSha256 === sha256(source);
+  } catch {
+    return false;
+  }
+}
+
 function safeScopePath(scope) {
   return (
     typeof scope === "string" &&
@@ -220,7 +243,7 @@ async function materializeReadScope(readScope) {
 async function main() {
   const [, , command, ...args] = process.argv;
   const loaded = await dispatchPolicy();
-  if (loaded.state === "off") {
+  if (loaded.state === "off" || (loaded.state === "active" && !(await activeManifestValid(loaded.policy)))) {
     output(off());
     process.exitCode = 1;
     return;
