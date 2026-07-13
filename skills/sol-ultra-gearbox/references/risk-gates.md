@@ -5,9 +5,12 @@ Use these gates in order. Stop at the first failure.
 | Gate | Required evidence | Hard failure | Action |
 |---|---|---|---|
 | Scope | Matching Gearbox files and request | Risk text belongs to another system | Exclude it and report the mismatch |
+| Managed policy | Signed policy, capability flags, and trusted current ten-question acceptance for active mode | Missing, invalid, unmanaged, stale, or hash-mismatched policy/evidence | Resolve to `off`; do not delegate or activate |
 | Static config | Tests, doctor, strict config, dry-run | Parse error, unmanaged v2 table, unsupported model | Do not run live probes |
 | Spawn surface | Current task exposes `agent_type` | Only untyped spawn is available | Keep work on the Sol root |
 | Prompt isolation | Self-contained task and `fork_turns="none"` | Full-history fork or runtime override | Refuse the child |
+| Quality | Clear scope, deterministic verification, safe risk class, and no hidden coupling | Ambiguous, high-risk, weakly verifiable, or over-scoped work | Keep work on the Sol root before considering cost |
+| Cost | Measurable avoided root work after quality passes | Root can finish in two calls, one location, or packet overhead dominates | Keep work on the Sol root |
 | Permissions | Role sandbox matches the parent permission mode | Bypass permissions, `--yolo`, or broader access | Refuse delegation |
 | Runtime identity | Persisted role, model, effort, sandbox, depth | Missing or mismatched metadata | Mark failure, not unverified success |
 | Lineage | One typed child, depth 1, no descendants | Extra spawn or missing parent-child link | Stop the smoke run |
@@ -18,6 +21,19 @@ Use these gates in order. Stop at the first failure.
 | Global apply | Explicit owner approval and all live roles pass | Any earlier gate failed | Do not modify `~/.codex` |
 | Skill install | Managed target and unchanged installed hashes | Unmanaged or locally edited target | Refuse overwrite |
 | Publication | Tests, release check, skill validation, secret scan | Raw reports, secrets, or private home paths | Do not commit or push |
+
+For an actual supported route, call `gearbox-dispatch plan` after the policy,
+quality, and cost gates. A read-only Luna/Terra parent-permission mismatch may
+use `isolated_role_root` through `gearbox-dispatch run-isolated`; it is an
+isolated root, not a child. A writer mismatch remains root-inline. Unsupported
+direct Codex core calls are outside repository interception.
+
+`off` makes no routing decision, `shadow` only records a root-executed plan,
+and `active` may execute an approved decision. First active installation sets
+`allowTypedBridge=false`. One correction is allowed only for a concrete local
+output defect; identity, permission, scope, cleanup, policy, or ambiguity
+failure receives no retry. Hard active failures stop delegation and use only
+the signed activation manifest with the managed rollback command.
 
 ## Version changes
 

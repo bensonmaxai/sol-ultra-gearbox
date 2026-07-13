@@ -29,6 +29,10 @@ Read
 before any workflow skill dispatches, delegates, fans out, or calls
 `spawn_agent`.
 
+Read [references/quality-first-dispatch.md](references/quality-first-dispatch.md)
+before planning or executing supported delegated work in `shadow` or `active`
+mode.
+
 ## Run the least costly gate
 
 For an audit or planned change, run:
@@ -78,6 +82,47 @@ Inspect the `spawn_agent` schema exposed in the current task.
 - Refuse untyped children that would inherit the parent model.
 - Limit delegation to two direct children, depth 1, with no nested spawning.
 - Prefer read-only fan-out. Allow one writer per exclusive file scope.
+
+## Run quality-first managed dispatch
+
+Gearbox enforces this flow through managed instructions and its runner; it is
+not a Codex core hook. Unsupported direct `spawn_agent` calls outside this
+skill or `gearbox-dispatch` are not intercepted by this repository.
+
+The dispatch policy is fail closed: missing, invalid, unmanaged, or
+hash-mismatched policy is `off`. `off` makes no routing decision; `shadow`
+calculates and records a decision but completes work in the Sol root; `active`
+may execute only an approved decision. The quality gate runs before the cost
+gate, so a cheaper role never overturns a quality rejection.
+
+For supported actual delegation, use this exact root workflow:
+
+1. Build one self-contained packet only when actual delegation is intended.
+2. Load the managed policy; missing or invalid means `off`.
+3. Run `gearbox-dispatch plan` with the packet and current schema and parent-permission facts.
+4. `root_inline`: Sol completes the task.
+5. `typed_child`: Sol calls `spawn_agent` with exact typed args, waits, closes the child, and validates runtime evidence.
+6. `isolated_role_root`: run `gearbox-dispatch run-isolated`; this is an isolated root, never a child.
+7. Reject missing or mismatched evidence before integration.
+8. On a hard active-mode failure, stop delegation and use the signed policy activation manifest with the managed rollback command.
+9. Sol integrates, runs final relevant tests, records the privacy-safe outcome, and cleans the packet.
+
+The execution shapes are `root_inline`, `typed_child`, `isolated_role_root`,
+and `typed_child_bridge`. Direct Luna/Terra read-only work whose parent
+permission does not match runs only as `isolated_role_root`, never as a native
+child. A write mismatch remains `root_inline`. `typed_child_bridge` needs a
+separate verified capability and is disabled for first activation with
+`allowTypedBridge=false`.
+
+Unknown skills, unavailable typed capability flags, generic roles, or missing
+trusted runtime evidence fail closed to `root_inline`. Give a cheap role one
+initial attempt and at most one correction for a concrete local output defect;
+never retry identity, permission, scope, cleanup, policy, ambiguity, or hidden
+coupling failures. Active mode requires trusted current ten-question acceptance
+evidence and an applied manifest. Dispatch status and public
+evidence redact the local manifest path; only the managed rollback command may
+consume it to change global state. Do not claim a savings percentage before ten
+comparable root-inclusive real-work pairs exist.
 
 ## Adapt skill-driven delegation
 
@@ -151,7 +196,7 @@ the managed command; it disables the folder instead of deleting it.
 ## Prepare a public release
 
 Generate the paired machine-readable and Markdown evidence with
-`npm run release:evidence -- --smoke <path> --sdd <path> --usage <path>`, then
+`npm run release:evidence -- --smoke <path> --sdd <path> --acceptance <path> --usage <path>`, then
 run unit tests, `npm run release:check`, the official skill validator when
 available, and a local secret scanner. Keep raw reports, auth state, complete
 user config, rollout contents, and private filesystem paths out of Git.

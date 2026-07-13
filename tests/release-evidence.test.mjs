@@ -46,6 +46,15 @@ function evidence(source = sourceManifest()) {
         phases: ["terra_worker", "sol_reviewer"],
         commit: "a".repeat(40),
       },
+      acceptanceExam: {
+        pass: true,
+        generatedAt: "2026-07-13T04:00:00.000Z",
+        questionCount: 10,
+        passedQuestionCount: 10,
+        executionShapes: ["root_inline", "isolated_role_root", "typed_child"],
+        activeEligible: true,
+        runtimeBindingSha256: "b".repeat(64),
+      },
     },
     costEvidence: {
       kind: "real_work",
@@ -105,6 +114,38 @@ test("release evidence validates exact source and rendered Markdown", () => {
     currentSource: current,
   });
   assert.equal(result.pass, true);
+  assert.equal(result.checks.acceptanceExam, true);
+});
+
+test("release evidence requires a sanitized, complete acceptance summary", () => {
+  const current = sourceManifest();
+  const value = evidence(current);
+  const incomplete = finalizeReleaseEvidence({
+    ...value,
+    runtime: { ...value.runtime, acceptanceExam: { ...value.runtime.acceptanceExam, questionCount: 9 } },
+  });
+  const incompleteResult = validateReleaseEvidence({
+    evidence: incomplete,
+    markdown: renderReleaseEvidence(incomplete),
+    currentSource: current,
+  });
+  assert.equal(incompleteResult.pass, false);
+  assert.equal(incompleteResult.checks.acceptanceExam, false);
+
+  const unsafe = finalizeReleaseEvidence({
+    ...value,
+    runtime: {
+      ...value.runtime,
+      acceptanceExam: { ...value.runtime.acceptanceExam, rawOutput: "private" },
+    },
+  });
+  const unsafeResult = validateReleaseEvidence({
+    evidence: unsafe,
+    markdown: renderReleaseEvidence(unsafe),
+    currentSource: current,
+  });
+  assert.equal(unsafeResult.pass, false);
+  assert.equal(unsafeResult.checks.acceptanceExam, false);
 });
 
 test("release evidence becomes stale when any source file changes", () => {

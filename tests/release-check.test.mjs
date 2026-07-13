@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { WORKFLOW_POLICY } from "../lib/gearbox.mjs";
 import { scanText } from "../lib/release-check.mjs";
 
 const BUNDLED_SKILL = fileURLToPath(
@@ -29,4 +30,23 @@ test("bundled skill documents Sol Max and the Terra Max opt-in role", async () =
   assert.match(source, /Never select it automatically/);
   assert.match(source, /references\/routing-matrix\.md/);
   assert.match(source, /references\/subagent-skill-compatibility\.md/);
+});
+
+test("managed policy and bundled skill publish the quality-first dispatch contract", async () => {
+  const source = await readFile(BUNDLED_SKILL, "utf8");
+  for (const value of [WORKFLOW_POLICY, source]) {
+    assert.match(value, /quality gate.*cost gate|quality.*before.*cost/i);
+    assert.match(value, /gearbox-dispatch plan/);
+    assert.match(value, /root_inline/);
+    assert.match(value, /typed_child/);
+    assert.match(value, /isolated_role_root/);
+    assert.match(value, /typed_child_bridge/);
+    assert.match(value, /allowTypedBridge=false/);
+    assert.match(value, /ten-question acceptance/i);
+    assert.match(value, /one correction/i);
+    assert.match(value, /unsupported direct `spawn_agent` calls/i);
+    assert.match(value, /not intercepted by this repository/i);
+  }
+  assert.match(source, /isolated root, never a child/i);
+  assert.match(source, /references\/quality-first-dispatch\.md/);
 });

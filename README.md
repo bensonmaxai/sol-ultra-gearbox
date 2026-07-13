@@ -97,6 +97,47 @@ tool runtime. Static tests protect the managed policy and spawn-argument
 validator; persisted rollout metadata remains the authority for actual runtime
 identity.
 
+## Quality-first dispatch
+
+For supported actual delegation, Gearbox uses managed instructions plus the
+`gearbox-dispatch` runner. It does not intercept a direct Codex core
+`spawn_agent` call made outside those entrypoints.
+
+The managed policy is fail closed: missing, invalid, unmanaged, or
+hash-mismatched policy is `off`. In `off`, Gearbox makes no automatic routing
+decision. In `shadow`, it calculates and records a decision but the Sol root
+executes the work. In `active`, it may execute only a decision that passes all
+gates. Quality is always checked before cost, so an available cheaper role
+cannot reverse a quality rejection.
+
+Build a self-contained packet only when delegation is intended, then run
+`gearbox-dispatch plan` with the packet, current spawn-schema capability, and
+parent-permission facts. The possible shapes are:
+
+| Shape | Meaning |
+|---|---|
+| `root_inline` | Sol completes the work after a failed gate or unsafe permission shape. |
+| `typed_child` | Sol calls the exact typed `spawn_agent` arguments only when permissions match. |
+| `isolated_role_root` | Direct Luna/Terra read-only work in a separate isolated root when parent permission would not match. It is never a child. |
+| `typed_child_bridge` | Disabled for first activation with `allowTypedBridge=false`. |
+
+Unknown skills, generic roles, missing typed capability flags, and missing or
+mismatched runtime evidence remain root-inline. A cheap role gets one initial
+attempt and at most one correction for a concrete local output defect; identity,
+permission, scope, cleanup, policy, ambiguity, or hidden-coupling failures do
+not retry. Trusted current ten-question acceptance evidence and an applied
+activation manifest are required before first active mode. A hard active-mode
+failure stops delegation; the manifest path is redacted from public output, and
+only the managed rollback command can consume it to alter global state.
+
+The exact root workflow is: build packet, load policy, plan, complete
+`root_inline` in Sol or execute/validate the selected `typed_child` or
+`isolated_role_root`, reject missing evidence, stop and roll back through the
+signed manifest after a hard active failure, then let Sol integrate, test,
+record a privacy-safe outcome, and clean the packet. See the
+[quality-first dispatch reference](skills/sol-ultra-gearbox/references/quality-first-dispatch.md)
+for the complete contract.
+
 ## Requirements
 
 - Node.js 20 or newer
@@ -114,11 +155,18 @@ The CLI can be selected with `CODEX_BIN`. `CODEX_HOME` defaults to
 npm test
 npm run release:check
 npm run doctor -- --json
-node scripts/gearbox.mjs apply --promote-v2 --dry-run
+node scripts/gearbox.mjs apply --promote-v2 --dispatch-mode active --dry-run
+npm run acceptance
+node scripts/gearbox.mjs apply --promote-v2 --dispatch-mode active
+npm run dispatch:status
 ```
 
-These commands do not run model-backed role probes and do not modify global
-configuration.
+The dry run does not run model-backed probes or modify global configuration.
+`npm run acceptance` and the final active apply are paid, owner-authorized
+operations. The final apply runs fresh paid smoke and acceptance evidence unless
+both trusted reuse paths (`--reuse-smoke` and `--reuse-acceptance`) validate
+against the current clean binding. All global changes are manifest-bound and
+reversible through the managed rollback command.
 
 ## Install the global skill
 
@@ -187,12 +235,15 @@ Apply only after explicit approval:
 node scripts/gearbox.mjs apply --promote-v2
 ```
 
-By default the apply command reruns all live role probes. To avoid immediately
-repeating a just-completed paid smoke, explicitly provide its local report:
+By default the active apply runs fresh role smoke and ten-question acceptance
+evidence. To avoid immediately repeating those paid checks, explicitly provide
+both trusted local reports:
 
 ```bash
 node scripts/gearbox.mjs apply --promote-v2 \
-  --reuse-smoke reports/<run>/smoke.json
+  --dispatch-mode active \
+  --reuse-smoke reports/<run>/smoke.json \
+  --reuse-acceptance reports/<run>/acceptance.json
 ```
 
 Reuse fails closed unless the report is under this repo's `reports/`, is a
@@ -218,6 +269,7 @@ artifacts from their ignored local reports:
 npm run release:evidence -- \
   --smoke reports/<run>/smoke.json \
   --sdd reports/<run>/sdd.json \
+  --acceptance reports/<run>/acceptance.json \
   --usage reports/<run>/real-work-usage.json
 ```
 
@@ -247,9 +299,9 @@ node scripts/cost-evidence.mjs add reports/cost-evidence.json record.json
 ```
 
 Nine complete pairs remain ineligible. Ten pairs expose aggregate raw evidence
-and eligibility only; the repository still does not publish prices or a
-savings estimator. Any future estimate must use a separately dated official
-pricing source.
+and eligibility only; the repository still does not publish prices, a savings
+percentage, or an estimator. Any future estimate must use a separately dated
+official pricing source.
 
 ## License
 

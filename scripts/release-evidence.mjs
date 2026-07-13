@@ -21,6 +21,7 @@ import {
   runtimeBindingComponentsMatch,
 } from "../lib/release-evidence.mjs";
 import { releaseCandidateFiles } from "../lib/release-check.mjs";
+import { validateAcceptanceEvidence } from "../lib/acceptance-exam.mjs";
 import {
   createRuntimeBinding,
   validateRoleSmokeEvidence,
@@ -41,6 +42,7 @@ const CODEX_BIN =
 const RUNTIME_BINDING_PATHS = Object.freeze([
   "lib/gearbox.mjs",
   "lib/runtime-evidence.mjs",
+  "lib/acceptance-exam.mjs",
   "scripts/gearbox.mjs",
   "scripts/codex-typed-agent",
 ]);
@@ -209,6 +211,27 @@ function summarizeSddAdapter(report, currentBinding, commitIsAncestor) {
   };
 }
 
+function summarizeAcceptanceExam(report, currentBinding, commitIsAncestor) {
+  const validation = validateAcceptanceEvidence(report);
+  if (
+    !validation.pass ||
+    report.runtimeBinding.git.clean !== true ||
+    !runtimeEvidenceCompatible(report, currentBinding, commitIsAncestor)
+  ) {
+    throw new Error("Acceptance exam report is incomplete, stale, or not bound to current HEAD");
+  }
+  const questions = report.questions;
+  return {
+    pass: true,
+    generatedAt: report.generatedAt,
+    questionCount: report.expectedQuestionCount,
+    passedQuestionCount: questions.filter((question) => question.pass === true).length,
+    executionShapes: [...new Set(questions.map((question) => question.selectedShape))].sort(),
+    activeEligible: report.activationEligible,
+    runtimeBindingSha256: report.runtimeBinding.sha256,
+  };
+}
+
 function summarizeObservedUsage(report) {
   const validation = validateObservedUsageReport(report);
   if (!validation.valid) {
@@ -269,7 +292,7 @@ async function main() {
   const [, , command, ...args] = process.argv;
   if (command !== "generate") {
     throw new Error(
-      "Usage: node scripts/release-evidence.mjs generate --smoke <reports/.../smoke.json> --sdd <reports/.../sdd.json> --usage <reports/.../real-work-usage.json> [--cost-ledger <path>]",
+      "Usage: node scripts/release-evidence.mjs generate --smoke <reports/.../smoke.json> --sdd <reports/.../sdd.json> --acceptance <reports/.../acceptance.json> --usage <reports/.../real-work-usage.json> [--cost-ledger <path>]",
     );
   }
   const statusBefore = await runCommand("git", [
@@ -282,10 +305,11 @@ async function main() {
     throw new Error("Release evidence generation requires a clean Git tree");
   }
   const currentHead = headResult.stdout.trim();
-  const [tests, smokeReport, sddReport, usageReport, costStatus, currentBinding] = await Promise.all([
+  const [tests, smokeReport, sddReport, acceptanceReport, usageReport, costStatus, currentBinding] = await Promise.all([
     runTests(),
     readLocalReport(optionValue(args, "--smoke"), "smoke.json"),
     readLocalReport(optionValue(args, "--sdd"), "sdd.json"),
+    readLocalReport(optionValue(args, "--acceptance"), "acceptance.json"),
     readLocalReport(optionValue(args, "--usage"), "real-work-usage.json"),
     loadCostStatus(
       optionValue(args, "--cost-ledger") ?? join(REPORTS_ROOT, "cost-evidence.json"),
@@ -295,9 +319,10 @@ async function main() {
   if (currentBinding.git.head !== currentHead || currentBinding.git.clean !== true) {
     throw new Error("Current runtime binding does not match the clean release HEAD");
   }
-  const [smokeCommitIsAncestor, sddCommitIsAncestor] = await Promise.all([
+  const [smokeCommitIsAncestor, sddCommitIsAncestor, acceptanceCommitIsAncestor] = await Promise.all([
     reportCommitIsAncestor(smokeReport, currentBinding),
     reportCommitIsAncestor(sddReport, currentBinding),
+    reportCommitIsAncestor(acceptanceReport, currentBinding),
   ]);
   const statusAfterTests = await runCommand("git", [
     "status",
@@ -318,6 +343,11 @@ async function main() {
     runtime: {
       roleSmoke: summarizeRoleSmoke(smokeReport, currentBinding, smokeCommitIsAncestor),
       sddAdapter: summarizeSddAdapter(sddReport, currentBinding, sddCommitIsAncestor),
+      acceptanceExam: summarizeAcceptanceExam(
+        acceptanceReport,
+        currentBinding,
+        acceptanceCommitIsAncestor,
+      ),
     },
     costEvidence: {
       kind: "real_work",
