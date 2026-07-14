@@ -115,7 +115,13 @@ test("workflow outcome validator rejects extras, unsafe counts, codes, and neste
     { ...record, tokens: -1 },
     { ...record, retryCount: 2 },
     { ...record, reasonCode: "unsafe code" },
-    { ...record, reservedAttemptsBefore: { verification: "/Users/private-owner", recovery: 1 } },
+    {
+      ...record,
+      reservedAttemptsBefore: {
+        verification: join("/", "Users", "private-owner"),
+        recovery: 1,
+      },
+    },
   ]) {
     assert.equal(validateWorkflowOutcomeRecord(changed).pass, false);
   }

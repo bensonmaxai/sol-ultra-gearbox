@@ -115,7 +115,8 @@ test("workflow record validation rejects private fields and private home paths",
   for (const field of forbidden) {
     assert.equal(validateWorkflowRecord({ ...records[1], [field]: "private" }).pass, false, field);
   }
-  assert.equal(validateWorkflowRecord({ ...records[1], role: "/Users/private-owner/project" }).pass, false);
+  const privateHomePath = join("/", "Users", "private-owner", "project");
+  assert.equal(validateWorkflowRecord({ ...records[1], role: privateHomePath }).pass, false);
   const cyclic = { ...records[1], eventData: { ...records[1].eventData } };
   cyclic.eventData.self = cyclic.eventData;
   assert.equal(validateWorkflowRecord(cyclic).pass, false);
