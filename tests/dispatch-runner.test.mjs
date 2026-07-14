@@ -5,6 +5,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { createFakeCodex } from "./helpers/fake-codex.mjs";
 import { ROLE_SPECS, cleanupProbeArtifacts, sha256 } from "../lib/gearbox.mjs";
+import { hashTaskPacket } from "../lib/dispatch-planner.mjs";
+import { compileStagePacket } from "../lib/workflow-compiler.mjs";
+import { hashWorkflowPlan } from "../lib/workflow-plan.mjs";
+import { workflowPlan } from "./helpers/workflow-fixtures.mjs";
 import {
   buildIsolatedRootArgs,
   parseRoleInstructions,
@@ -150,6 +154,29 @@ test("isolated runner passes task data as argv rather than a shell command", asy
     const result = await runIsolatedRole({ codexBin: fake, codexHome: root, roleSpec: luna, roleSource, cwd, task: injectedTask, taskHash: sha256(injectedTask), timeoutMs: 2_000, onDeliverable: receiveDeliverable });
     assert.equal(result.pass, true);
     await assert.rejects(lstat(target), /ENOENT/);
+  } finally { await rm(root, { recursive: true, force: true }); await rm(cwd, { recursive: true, force: true }); }
+});
+
+test("isolated runner serializes workflow task-packet v2 without weakening runtime checks", async () => {
+  const root = await mkdtemp(join(tmpdir(), "dispatch-runner-v2-"));
+  const cwd = await mkdtemp(join(tmpdir(), "dispatch-runner-v2-work-"));
+  try {
+    const fake = await createFakeCodex(join(root, "fake-codex.mjs"));
+    await writeFile(join(root, "auth.json"), "fake-auth\n", "utf8");
+    const plan = workflowPlan();
+    const taskPacket = compileStagePacket({
+      plan,
+      planHash: hashWorkflowPlan(plan),
+      stageId: "audit-core",
+      approvalFacts: [],
+      batch: { requestedChildren: 1, writerCount: 0, scopesDisjoint: true },
+    });
+    const result = await runIsolatedRole({
+      codexBin: fake, codexHome: root, roleSpec: luna, roleSource, cwd,
+      taskPacket, taskHash: hashTaskPacket(taskPacket), timeoutMs: 2_000,
+      onDeliverable: receiveDeliverable,
+    });
+    assert.equal(result.pass, true);
   } finally { await rm(root, { recursive: true, force: true }); await rm(cwd, { recursive: true, force: true }); }
 });
 

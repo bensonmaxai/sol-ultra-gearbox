@@ -7,6 +7,7 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 import { createDispatchPolicy, serializeDispatchPolicy } from "../lib/dispatch-policy.mjs";
 import { DISPATCH_RUNTIME_FILES, ROLE_SPECS } from "../lib/gearbox.mjs";
+import { workflowPlan } from "./helpers/workflow-fixtures.mjs";
 
 const REPO_ROOT = resolve(new URL("..", import.meta.url).pathname);
 const CLI = join(REPO_ROOT, "scripts", "gearbox-dispatch.mjs");
@@ -52,6 +53,17 @@ function packet(overrides = {}) {
       includesRegressionTest: false,
       boundedFileCount: 0,
     },
+    ...overrides,
+  };
+}
+
+function workflowEnvelope(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    plan: workflowPlan(),
+    binding: { currentArtifactHashes: {} },
+    stateSource: { kind: "managed" },
+    event: null,
     ...overrides,
   };
 }
@@ -304,6 +316,40 @@ test("missing policy fails closed before any packet is read or model is launched
   assert.equal(result.code, 1);
   assert.deepEqual(jsonOnly(result), { status: "GEARBOX_DISPATCH_OFF", mode: "off" });
   await access(path);
+});
+
+test("workflow-next fails closed before consuming an owned packet when policy is off", async (t) => {
+  const { home, path } = await fixture(t, { policy: false });
+  const source = `${JSON.stringify(workflowEnvelope())}\n`;
+  await writeFile(path, source, { mode: 0o600 });
+  const result = await run(["workflow-next", "--packet", path, "--consume"], { CODEX_HOME: home });
+  assert.equal(result.code, 1);
+  assert.deepEqual(jsonOnly(result), { status: "GEARBOX_DISPATCH_OFF", mode: "off" });
+  assert.equal(await readFile(path, "utf8"), source);
+});
+
+test("workflow-next returns the managed public action without a raw plan goal", async (t) => {
+  const { home, path } = await fixture(t);
+  const source = await mkdtemp(join(tmpdir(), "gearbox-workflow-source-"));
+  t.after(() => rm(source, { recursive: true, force: true }));
+  for (const directory of ["lib", "scripts", "tests"]) {
+    await mkdir(join(source, directory), { recursive: true });
+    await writeFile(join(source, directory, "fixture.txt"), "fixture\n");
+  }
+  await writeFile(path, `${JSON.stringify(workflowEnvelope())}\n`, { mode: 0o600 });
+  const result = await run([
+    "workflow-next", "--packet", path,
+    "--agent-type-visible", "true",
+    "--isolated-runner-verified", "true",
+    "--runtime-metadata-available", "true",
+    "--permissions-enforced", "true",
+  ], { CODEX_HOME: home }, source);
+  assert.equal(result.code, 0, result.stdout);
+  const value = jsonOnly(result);
+  assert.equal(value.status, "GEARBOX_WORKFLOW_ACTION");
+  assert.equal(value.source, "managed");
+  assert.equal(value.public.kind, "root_inline");
+  assert.doesNotMatch(result.stdout, /Audit two modules|workflow-ledger\.jsonl|\/private\//);
 });
 
 test("active policy requires its applied manifest before planning", async (t) => {

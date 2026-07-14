@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 
-import { constants } from "node:fs";
-import { lstat, mkdir, mkdtemp, open, readdir, realpath, readFile, unlink } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, realpath, readFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   atomicWrite,
   cleanupProbeArtifacts,
@@ -17,103 +16,13 @@ import { planDispatch } from "../lib/dispatch-planner.mjs";
 import { validateDispatchResult } from "../lib/dispatch-evidence.mjs";
 import { DISPATCH_POLICY_RELATIVE_PATH, loadDispatchPolicy } from "../lib/dispatch-policy.mjs";
 import { runIsolatedRole } from "../lib/dispatch-runner.mjs";
+import { readOwnedPacket } from "../lib/owned-packet.mjs";
+import { runWorkflowNext } from "../lib/workflow-cli.mjs";
 
 const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), ".codex");
-const OWNED_PACKET_DIRECTORY = /^sol-ultra-gearbox-v2-packet-dispatch-[A-Za-z0-9]+$/;
 
 function off() {
   return { status: "GEARBOX_DISPATCH_OFF", mode: "off" };
-}
-
-function sameFile(left, right) {
-  return left.dev === right.dev && left.ino === right.ino && left.size === right.size;
-}
-
-function ownedMetadata(metadata, type) {
-  return (
-    (type === "directory" ? metadata.isDirectory() : metadata.isFile()) &&
-    !metadata.isSymbolicLink() &&
-    (typeof process.getuid !== "function" || metadata.uid === process.getuid()) &&
-    (metadata.mode & 0o077) === 0
-  );
-}
-
-async function resolveOwnedPacket(path) {
-  if (typeof path !== "string" || path.length === 0) {
-    throw new TypeError("owned dispatch packet path is required");
-  }
-  const tempRoot = await realpath(tmpdir());
-  const requested = resolve(path);
-  const requestedMetadata = await lstat(requested);
-  if (requestedMetadata.isSymbolicLink()) {
-    throw new TypeError("dispatch packet must not be a symlink");
-  }
-  const absolute = await realpath(requested);
-  const fromTemp = relative(tempRoot, absolute);
-  if (
-    fromTemp === "" ||
-    fromTemp === ".." ||
-    fromTemp.startsWith(`..${sep}`) ||
-    !fromTemp.includes(sep)
-  ) {
-    throw new TypeError("dispatch packet must be beneath an owned temporary directory");
-  }
-  const [directoryName] = fromTemp.split(sep);
-  if (!OWNED_PACKET_DIRECTORY.test(directoryName)) {
-    throw new TypeError("dispatch packet must be beneath an owned temporary directory");
-  }
-  const ownedDirectory = join(tempRoot, directoryName);
-  if (dirname(ownedDirectory) !== tempRoot || (await realpath(ownedDirectory)) !== ownedDirectory) {
-    throw new TypeError("dispatch packet directory must be a physical owned temporary directory");
-  }
-  if (!ownedMetadata(await lstat(ownedDirectory), "directory")) {
-    throw new TypeError("dispatch packet directory must be private and non-symlinked");
-  }
-
-  let current = ownedDirectory;
-  while (current !== dirname(absolute)) {
-    const metadata = await lstat(current);
-    if (!ownedMetadata(metadata, "directory")) {
-      throw new TypeError("dispatch packet directory must be private and non-symlinked");
-    }
-    const next = relative(current, absolute).split(sep)[0];
-    current = join(current, next);
-  }
-  const parent = await lstat(dirname(absolute));
-  const packet = await lstat(absolute);
-  if (!ownedMetadata(parent, "directory") || !ownedMetadata(packet, "file")) {
-    throw new TypeError("dispatch packet must be a private regular file");
-  }
-  return { absolute, packet };
-}
-
-async function readOwnedPacket(path, { consume }) {
-  const owned = await resolveOwnedPacket(path);
-  const handle = await open(owned.absolute, constants.O_RDONLY | constants.O_NOFOLLOW);
-  let source;
-  try {
-    const metadata = await handle.stat();
-    if (!sameFile(owned.packet, metadata) || !ownedMetadata(metadata, "file")) {
-      throw new TypeError("dispatch packet changed while opening");
-    }
-    source = await handle.readFile({ encoding: "utf8" });
-  } finally {
-    await handle.close();
-  }
-  let packet;
-  try {
-    packet = JSON.parse(source);
-  } catch {
-    throw new TypeError("dispatch packet must contain JSON");
-  }
-  if (consume) {
-    const current = await lstat(owned.absolute);
-    if (!sameFile(owned.packet, current) || !ownedMetadata(current, "file")) {
-      throw new TypeError("dispatch packet changed before consume");
-    }
-    await unlink(owned.absolute);
-  }
-  return packet;
 }
 
 function parsePacketArguments(args) {
@@ -399,20 +308,40 @@ async function main() {
     });
     return;
   }
-  if (command !== "plan" && command !== "run-isolated") throw new TypeError("unknown dispatch command");
+  if (command !== "plan" && command !== "run-isolated" && command !== "workflow-next") throw new TypeError("unknown dispatch command");
 
   const { packetPath, consume, capabilityInput } = parsePacketArguments(args);
   const packet = await readOwnedPacket(packetPath, { consume });
+  const capabilities = {
+    agentTypeVisible: capabilityInput.agentTypeVisible === true,
+    isolatedRunnerVerified: capabilityInput.isolatedRunnerVerified === true,
+    runtimeMetadataAvailable: capabilityInput.runtimeMetadataAvailable === true,
+    bridgeRuntimeVerified: false,
+    permissionBypassActive: capabilityInput.permissionsEnforced !== true,
+  };
+  if (command === "workflow-next") {
+    const result = await runWorkflowNext({
+      envelope: packet,
+      policy: loaded.policy,
+      capabilities,
+      roleSpecs: ROLE_SPECS,
+      cwd: process.cwd(),
+    });
+    output({
+      status: result.status,
+      mode: result.mode,
+      source: result.source,
+      rollbackRequired: result.rollbackRequired,
+      ...(result.public ? { public: result.public } : {}),
+      ...(result.reasonCode ? { reasonCode: result.reasonCode } : {}),
+    });
+    if (result.status === "GEARBOX_WORKFLOW_BLOCKED") process.exitCode = 1;
+    return;
+  }
   const decision = planDispatch({
     policy: loaded.policy,
     packet,
-    capabilities: {
-      agentTypeVisible: capabilityInput.agentTypeVisible === true,
-      isolatedRunnerVerified: capabilityInput.isolatedRunnerVerified === true,
-      runtimeMetadataAvailable: capabilityInput.runtimeMetadataAvailable === true,
-      bridgeRuntimeVerified: false,
-      permissionBypassActive: capabilityInput.permissionsEnforced !== true,
-    },
+    capabilities,
     roleSpecs: ROLE_SPECS,
   });
   if (command === "plan") {
