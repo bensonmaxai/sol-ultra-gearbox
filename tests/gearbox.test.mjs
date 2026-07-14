@@ -530,6 +530,8 @@ test("dispatch runtime install rolls back every target after a mid-write failure
   ]));
   const before = await treeState(home);
   let writes = 0;
+  const writtenPaths = [];
+  const failureAt = DISPATCH_RUNTIME_FILES.length + 2;
   await assert.rejects(
     installDispatchRuntime({
       sourceRoot: REPO_ROOT,
@@ -538,13 +540,17 @@ test("dispatch runtime install rolls back every target after a mid-write failure
       dispatchMode: "shadow",
       writeTarget: async (...args) => {
         writes += 1;
-        if (writes === 2) throw new Error("synthetic dispatch write failure");
+        if (writes === failureAt) throw new Error("synthetic dispatch write failure");
+        writtenPaths.push(args[0]);
         return atomicWrite(...args);
       },
     }),
     /synthetic dispatch write failure/,
   );
-  assert.equal(writes, 2);
+  assert.equal(writes, failureAt);
+  for (const path of WORKFLOW_RUNTIME_FILES) {
+    assert.ok(writtenPaths.includes(join(home, "gearbox", "runtime", path)), path);
+  }
   assert.deepEqual(await treeState(home), before);
 });
 
