@@ -9,6 +9,7 @@ import {
   createWorkflowRecord,
   replayWorkflowRecords,
   selectWorkflowStore,
+  validateWorkflowRecordSequence,
   validateWorkflowRecord,
 } from "../lib/workflow-ledger.mjs";
 import { readPrivateJsonl } from "../lib/private-jsonl.mjs";
@@ -48,8 +49,38 @@ test("workflow records form an exact hash chain and replay deterministic state",
   assert.equal(records[0].previousRecordHash, null);
   assert.equal(records[1].previousRecordHash, records[0].recordHash);
   assert.equal(records[2].previousRecordHash, records[1].recordHash);
+  assert.equal(validateWorkflowRecordSequence(records).pass, true);
   const replayed = replayWorkflowRecords({ plan, records });
   assert.deepEqual(workflowStateSummary(replayed), workflowStateSummary(approved));
+});
+
+test("workflow-level batch records persist without inventing a stage identity", () => {
+  const { plan, state: initial } = initializedWorkflow();
+  const initialization = createWorkflowRecord({ previousRecordHash: null, state: initial, event: null });
+  const readyEvent = event("stage_ready", { stageId: "audit-core" });
+  const ready = reduceWorkflowEvent({ plan, state: initial, event: readyEvent });
+  const readyRecord = createWorkflowRecord({
+    previousRecordHash: initialization.recordHash,
+    state: ready,
+    event: readyEvent,
+  });
+  const batchEvent = event("batch_planned", {
+    batchId: "batch-ledger",
+    stageIds: ["audit-core"],
+    canaryStageId: "audit-core",
+  });
+  const batched = reduceWorkflowEvent({ plan, state: ready, event: batchEvent });
+  const batchRecord = createWorkflowRecord({
+    previousRecordHash: readyRecord.recordHash,
+    state: batched,
+    event: batchEvent,
+  });
+  assert.equal(batchRecord.stageId, null);
+  assert.equal(validateWorkflowRecord(batchRecord).pass, true);
+  assert.deepEqual(
+    workflowStateSummary(replayWorkflowRecords({ plan, records: [initialization, readyRecord, batchRecord] })),
+    workflowStateSummary(batched),
+  );
 });
 
 test("workflow replay rejects duplicate initialization, broken chains, reordering, and event-state mismatch", () => {
