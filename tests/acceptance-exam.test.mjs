@@ -70,6 +70,14 @@ function question(scenario, overrides = {}) {
       lineageExact: true,
       filesystemUnchanged: true,
       parentMarkerReturned: true,
+      workflowCanary: {
+        firstRole: "luna_clerk",
+        firstChildPersisted: true,
+        listObservedBetweenSpawns: true,
+        listReceiptRunningOrCompleted: true,
+        secondRole: "terra_explorer",
+        secondSpawnAfterCanary: true,
+      },
     };
   }
   return result;
@@ -373,4 +381,62 @@ test("parallel acceptance rejects child runtime drift, inferred writers, or weak
     });
     assert.equal(report.pass, false);
   }
+});
+
+test("parallel acceptance rejects every Q10 canary topology mutation", async () => {
+  const currentBinding = binding();
+  const mutations = [
+    (topology) => { topology.workflowCanary.firstRole = "terra_explorer"; },
+    (topology) => { topology.workflowCanary.listObservedBetweenSpawns = false; },
+    (topology) => { topology.workflowCanary.listObservedBetweenSpawns = false; },
+    (topology) => { topology.workflowCanary.listReceiptRunningOrCompleted = false; },
+    (topology) => { topology.workflowCanary.firstChildPersisted = false; },
+    (topology) => { topology.workflowCanary.secondSpawnAfterCanary = false; },
+    (topology) => { topology.spawnsExact = false; },
+    (topology) => { topology.messagesDistinct = false; },
+    (topology) => { topology.children[0].model = "gpt-5.6-sol"; },
+    (topology) => { topology.children[0].effort = "high"; },
+    (topology) => { topology.children[0].sandbox = "workspace-write"; },
+    (topology) => { topology.lineageExact = false; },
+    (topology) => { topology.writerCount = 1; },
+    (topology) => { topology.descendantCount = 1; },
+    (topology) => { topology.filesystemUnchanged = false; },
+  ];
+  for (const mutate of mutations) {
+    const report = await runAcceptanceExam({
+      policy: { allowTypedBridge: false },
+      roleSmoke: { pass: true, roles: [{ role: "terra_worker", pass: true }] },
+      runtimeBinding: currentBinding,
+      readGlobalConfig: async () => "config",
+      ...executors({
+        executeParallel: async (scenario) => {
+          const result = question(scenario);
+          mutate(result.topology);
+          return result;
+        },
+      }),
+    });
+    assert.equal(report.pass, false);
+  }
+  const cleanupDrift = await runAcceptanceExam({
+    policy: { allowTypedBridge: false },
+    roleSmoke: { pass: true, roles: [{ role: "terra_worker", pass: true }] },
+    runtimeBinding: currentBinding,
+    readGlobalConfig: async () => "config",
+    ...executors({ executeParallel: async (scenario) => question(scenario, { cleanup: { pass: false } }) }),
+  });
+  assert.equal(cleanupDrift.pass, false);
+});
+
+test("Q10 publishes only the workflow canary boolean", async () => {
+  const report = await runAcceptanceExam({
+    policy: { allowTypedBridge: false },
+    roleSmoke: { pass: true, roles: [{ role: "terra_worker", pass: true }] },
+    runtimeBinding: binding(),
+    readGlobalConfig: async () => "config",
+    ...executors(),
+  });
+  assert.deepEqual(Object.keys(report.questions[9]).sort(), ["cleanup", "id", "pass", "reasonCode", "runtime", "selectedShape", "workflowCanary"]);
+  assert.equal(report.questions[9].workflowCanary, true);
+  assert.equal(JSON.stringify(report.questions[9]).includes("firstChildPersisted"), false);
 });

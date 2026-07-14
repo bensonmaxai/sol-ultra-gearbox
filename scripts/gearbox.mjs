@@ -553,7 +553,9 @@ export async function runAcceptanceParallel(scenario, { decision = null } = {}) 
     const prompt = [
       "This is an explicitly authorized acceptance fixture.",
       "Call spawn_agent exactly twice and no other delegation.",
-      `Use exactly these argument objects and no extra fields:\n${exactCalls.join("\n")}`,
+      `First use exactly this Luna argument object and no extra fields:\n${exactCalls[0]}`,
+      "After the first spawn returns, call list_agents exactly once. Confirm the Luna child is running or completed before continuing.",
+      `Only then use exactly this Terra argument object and no extra fields:\n${exactCalls[1]}`,
       `Do not pass model, reasoning_effort, model_reasoning_effort, or service_tier. Wait for both children. Do not edit files. After both exact child markers arrive, reply exactly ${parentMarker}.`,
     ].join("\n");
     const command = await runCommand(CODEX_BIN, [
@@ -598,6 +600,25 @@ export async function runAcceptanceParallel(scenario, { decision = null } = {}) 
         ? acceptanceChildFacts(child, expected, spawnCall?.args)
         : { role, model: null, effort: null, depth: null, sandbox: null, writer: true, descendants: 0, declaredReadScope: null, markerReturned: false, runtimePersisted: false, tokenUsage: null };
     });
+    const lunaChild = children.find((child) =>
+      (child?.sessionMeta?.agent_role ?? child?.sessionMeta?.source?.subagent?.thread_spawn?.agent_role) === "luna_clerk",
+    );
+    const lunaSpawn = spawnCalls.find((call) => call?.args?.agent_type === "luna_clerk");
+    const terraSpawn = spawnCalls.find((call) => call?.args?.agent_type === "terra_explorer");
+    const firstSpawnIndex = lunaSpawn?.callIndex;
+    const secondSpawnIndex = terraSpawn?.callIndex;
+    const listReceipt = (parent?.toolTimeline ?? []).find((entry) =>
+      entry?.name === "list_agents" && Number.isInteger(firstSpawnIndex) && Number.isInteger(secondSpawnIndex) &&
+      entry.callIndex > firstSpawnIndex && entry.callIndex < secondSpawnIndex,
+    );
+    const workflowCanary = {
+      firstRole: lunaSpawn?.args?.agent_type ?? null,
+      firstChildPersisted: Boolean(lunaChild?.sessionMeta && lunaChild?.turnContext),
+      listObservedBetweenSpawns: Boolean(listReceipt),
+      listReceiptRunningOrCompleted: listReceipt?.outputPresent === true && listReceipt?.runningOrCompleted === true,
+      secondRole: terraSpawn?.args?.agent_type ?? null,
+      secondSpawnAfterCanary: Boolean(listReceipt) && secondSpawnIndex > listReceipt.callIndex,
+    };
     const parentId = parent?.sessionId ?? parent?.sessionMeta?.id ?? parent?.sessionMeta?.session_id;
     const childIds = children.map((child) => child?.sessionId ?? child?.sessionMeta?.id ?? child?.sessionMeta?.session_id);
     const lineageExact = parents.length === 1 && summaries.length === 3 && children.length === 2 &&
@@ -618,6 +639,7 @@ export async function runAcceptanceParallel(scenario, { decision = null } = {}) 
       lineageExact,
       filesystemUnchanged,
       parentMarkerReturned,
+      workflowCanary,
     };
     topology.writerCount = childFacts.filter((child) => child.writer).length;
     const childRuntime = childFacts.length === 2 && ACCEPTANCE_PARALLEL_CHILDREN.every((spec) =>
@@ -628,7 +650,10 @@ export async function runAcceptanceParallel(scenario, { decision = null } = {}) 
     answer = acceptanceResult(scenario, {
       decision,
       pass: command.code === 0 && !command.timedOut && validSpawns && childRuntime &&
-        lineageExact && filesystemUnchanged && parentMarkerReturned && topology.writerCount === 0 && topology.descendantCount === 0,
+        lineageExact && filesystemUnchanged && parentMarkerReturned && topology.writerCount === 0 && topology.descendantCount === 0 &&
+        workflowCanary.firstRole === "luna_clerk" && workflowCanary.firstChildPersisted &&
+        workflowCanary.listObservedBetweenSpawns && workflowCanary.listReceiptRunningOrCompleted &&
+        workflowCanary.secondRole === "terra_explorer" && workflowCanary.secondSpawnAfterCanary,
       runtime: acceptanceRuntime(parent),
       topology,
       cleanup: { pass: false },

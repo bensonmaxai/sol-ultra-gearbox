@@ -18,6 +18,7 @@
     "apply": "node scripts/gearbox.mjs apply --promote-v2",
     "dispatch:status": "node scripts/gearbox-dispatch.mjs status",
     "acceptance": "node scripts/gearbox.mjs acceptance --all",
+    "workflow:evidence": "node scripts/workflow-contract-evidence.mjs",
     "cost:evidence": "node scripts/cost-evidence.mjs status",
     "skill:status": "node scripts/skill.mjs status",
     "skill:install": "node scripts/skill.mjs install",

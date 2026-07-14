@@ -556,6 +556,24 @@ test("rollout summary keeps session correlation in memory but writeJson removes 
   assert.match(persisted, /total_tokens/);
 });
 
+test("rollout summary correlates a privacy-safe tool timeline", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "gearbox-rollout-timeline-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const rollout = join(directory, "rollout.jsonl");
+  await writeFile(rollout, [
+    JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "private-luna", name: "spawn_agent", arguments: '{"agent_type":"luna_clerk","message":"private"}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "private-luna", output: '{"task":"private"}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "private-list", name: "list_agents", arguments: '{}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "private-list", output: '[{"status":"running"}]' } }),
+  ].join("\n"), "utf8");
+  const summary = await summarizeRollout(rollout);
+  assert.deepEqual(summary.toolTimeline, [
+    { name: "spawn_agent", callIndex: 0, outputPresent: true, outputSha256: sha256('{"task":"private"}'), runningOrCompleted: false },
+    { name: "list_agents", callIndex: 1, outputPresent: true, outputSha256: sha256('[{"status":"running"}]'), runningOrCompleted: true },
+  ]);
+  assert.doesNotMatch(JSON.stringify(summary.toolTimeline), /private-luna|private-list|luna_clerk|private/);
+});
+
 test("cleanupProbeArtifacts removes only owned temporary directories", async (t) => {
   const owned = await Promise.all([
     mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-luna_clerk-")),
