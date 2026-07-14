@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { promisify } from "node:util";
 import { chmod, mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -203,6 +204,7 @@ test("validateDispatchRecord rejects private fields and private home-path values
     "message",
     "goal",
     "sessionId",
+    "threadId",
     "path",
     "cwd",
     "auth",
@@ -221,6 +223,15 @@ test("validateDispatchRecord rejects private fields and private home-path values
     validateDispatchRecord(record({ tokens: { parent: 120, child: "/home/private-owner", isolatedRoot: 0 } })).pass,
     false,
   );
+});
+
+test("dispatch ledger schema and serialized record remain unchanged", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "dispatch-ledger-schema-"));
+  const path = join(parent, "dispatch-ledger.jsonl");
+  const value = record();
+  appendDispatchRecord(path, value);
+  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), value);
+  assert.equal(validateDispatchRecord(value).pass, true);
 });
 
 test("appendDispatchRecord creates a private canonical JSONL ledger in a temporary fixture", async () => {
