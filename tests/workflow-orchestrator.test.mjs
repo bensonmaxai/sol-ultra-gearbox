@@ -104,6 +104,24 @@ test("an active batch cannot emit a delegated deferred action after delegation s
   assert.equal(next.action.stageId, "audit-cli");
 });
 
+test("a stopped active batch blocks instead of waiting when no deferred action is legal", () => {
+  const { plan, planHash, state } = initializedWorkflow();
+  const first = planNextWorkflowAction({ plan, planHash, state, policy, capabilities, roleSpecs: ROLE_SPECS });
+  let projected = state;
+  for (const item of first.readinessEvents) projected = reduceWorkflowEvent({ plan, state: projected, event: item });
+  projected = reduceWorkflowEvent({ plan, state: projected, event: first.batchEvent });
+  projected.delegationStopped = true;
+  projected.stopReason = "WORKFLOW_CANARY_FAILED";
+
+  for (const canaryReady of [false, true]) {
+    const stopped = structuredClone(projected);
+    stopped.activeBatch.canaryReady = canaryReady;
+    if (canaryReady) stopped.stages["audit-cli"].state = "blocked";
+    const next = planNextWorkflowAction({ plan, planHash, state: stopped, policy, capabilities, roleSpecs: ROLE_SPECS });
+    assert.deepEqual(next.action, { kind: "blocked", reasonCode: "WORKFLOW_CANARY_FAILED" });
+  }
+});
+
 test("typed receipts validate exact envelope and sanitize execution identities", () => {
   const action = {
     kind: "materialize",
