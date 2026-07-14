@@ -80,3 +80,25 @@ export function stage(overrides = {}) {
     ...overrides,
   };
 }
+
+export function initializedWorkflow({ plan = workflowPlan(), ready = [], budget } = {}) {
+  if (budget) plan = { ...plan, attemptBudget: budget };
+  const planHash = hashWorkflowPlan(plan);
+  let state = createWorkflowState({
+    plan,
+    planHash,
+    policyMode: "active",
+    policyHash: FIXTURE_HASH,
+    permissionHash: "b".repeat(64),
+    workspaceHash: "c".repeat(64),
+    at: "2026-07-15T00:00:00.000Z",
+  });
+  for (const stageId of ready) {
+    state.stages[stageId].state = "ready";
+  }
+  return { plan, planHash, state };
+}
+import { createWorkflowState } from "../../lib/workflow-state.mjs";
+import { hashWorkflowPlan } from "../../lib/workflow-plan.mjs";
+
+export const FIXTURE_HASH = "a".repeat(64);
