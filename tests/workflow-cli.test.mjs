@@ -53,6 +53,7 @@ test("first shadow workflow call initializes private managed state and returns a
   assert.doesNotMatch(JSON.stringify(result.action), /Audit two modules|workflow-ledger\.jsonl|\/private\//);
   const ledger = join(cwd, "reports", "workflow-ledger.jsonl");
   assert.match(await readFile(ledger, "utf8"), /workflow_initialized/);
+  await assert.rejects(access(join(cwd, "reports", "workflow-outcomes.jsonl")));
 });
 
 test("upstream workflow state returns append arrays and never writes managed storage", async (t) => {
@@ -119,6 +120,72 @@ test("binding and malformed upstream source fail closed without a managed ledger
   });
   assert.equal(invalidRecords.reasonCode, "WORKFLOW_UPSTREAM_STORE_INCOMPATIBLE");
   assert.equal(JSON.stringify(invalidRecords).includes("must-not-echo"), false);
+
+  const invalidEvent = await runWorkflowNext({
+    envelope: envelope({
+      stateSource: { kind: "upstream", schemaFields: ["workflowId", "planHash", "stageId", "state", "attempt", "executionShape", "role", "taskHash", "resultHash", "adopted", "updatedAt"], records: [] },
+      event: { schemaVersion: 1, type: "unknown_event", at: "2026-07-15T00:00:00.000Z" },
+    }),
+    policy, capabilities, roleSpecs: ROLE_SPECS, cwd,
+  });
+  assert.equal(invalidEvent.reasonCode, "WORKFLOW_ENVELOPE_INVALID");
+  await assert.rejects(access(join(cwd, "reports", "workflow-ledger.jsonl")));
+});
+
+test("upstream resume preserves exact binding drift reasons", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "workflow-cli-upstream-drift-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  for (const directory of ["lib", "scripts", "tests"]) {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(join(cwd, directory), { recursive: true });
+    await writeFile(join(cwd, directory, "fixture.txt"), "fixture\n");
+  }
+  const stateSource = { kind: "upstream", schemaFields: ["workflowId", "planHash", "stageId", "state", "attempt", "executionShape", "role", "taskHash", "resultHash", "adopted", "updatedAt"], records: [] };
+  const shadow = createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null });
+  const initialized = await runWorkflowNext({
+    envelope: envelope({ stateSource }), policy: shadow, capabilities, roleSpecs: ROLE_SPECS, cwd,
+  });
+  const active = createDispatchPolicy({
+    mode: "active",
+    allowTypedBridge: false,
+    activation: { installId: "fixture", manifestPath: "/tmp/fixture-manifest.json" },
+  });
+  const drifted = await runWorkflowNext({
+    envelope: envelope({ stateSource: { ...stateSource, records: initialized.recordsToAppend } }),
+    policy: active,
+    capabilities,
+    roleSpecs: ROLE_SPECS,
+    cwd,
+  });
+  assert.equal(drifted.reasonCode, "WORKFLOW_POLICY_DRIFT");
+  await assert.rejects(access(join(cwd, "reports", "workflow-ledger.jsonl")));
+});
+
+test("unsafe delegated action blocks before any managed state is persisted", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "workflow-cli-unsafe-action-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  for (const directory of ["lib", "scripts", "tests"]) {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(join(cwd, directory), { recursive: true });
+    await writeFile(join(cwd, directory, "fixture.txt"), "fixture\n");
+  }
+  const base = workflowPlan();
+  const plan = {
+    ...base,
+    stages: base.stages.map((stage, index) => ({
+      ...stage,
+      parentPermission: "read-only",
+      knownFacts: index === 0 ? ["sk" + "-abcdefghijklmnopqrstuvwxyz123456"] : stage.knownFacts,
+    })),
+  };
+  const policy = createDispatchPolicy({
+    mode: "active",
+    allowTypedBridge: false,
+    activation: { installId: "fixture", manifestPath: "/tmp/fixture-manifest.json" },
+  });
+  const result = await runWorkflowNext({ envelope: envelope({ plan }), policy, capabilities, roleSpecs: ROLE_SPECS, cwd });
+  assert.equal(result.status, "GEARBOX_WORKFLOW_BLOCKED");
+  assert.equal(result.reasonCode, "WORKFLOW_OUTPUT_UNSAFE");
   await assert.rejects(access(join(cwd, "reports", "workflow-ledger.jsonl")));
 });
 
@@ -208,6 +275,25 @@ test("active typed workflow emits only the canary and rejects an unmatched recei
   });
   assert.equal(released.action.kind, "typed_child");
   assert.equal(released.action.stageId, "audit-cli");
+  const deferredStarted = await runWorkflowNext({
+    envelope: envelope({ plan, event: {
+      schemaVersion: 1,
+      type: "materialization_started",
+      at: "2026-07-15T00:00:00.000Z",
+      stageId: released.action.stageId,
+      batchId: released.action.batchId,
+      executionShape: released.action.executionShape,
+      role: released.action.role,
+      taskHash: released.action.taskHash,
+      attemptClass: released.action.attemptClass,
+    } }),
+    policy,
+    capabilities,
+    roleSpecs: ROLE_SPECS,
+    cwd,
+  });
+  assert.notEqual(deferredStarted.status, "GEARBOX_WORKFLOW_BLOCKED");
+  assert.equal(deferredStarted.action.kind, "wait");
 });
 
 test("hard rejection requires rollback only in active mode", async (t) => {

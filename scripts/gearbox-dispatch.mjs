@@ -17,7 +17,7 @@ import { validateDispatchResult } from "../lib/dispatch-evidence.mjs";
 import { DISPATCH_POLICY_RELATIVE_PATH, loadDispatchPolicy } from "../lib/dispatch-policy.mjs";
 import { runIsolatedRole } from "../lib/dispatch-runner.mjs";
 import { readOwnedPacket } from "../lib/owned-packet.mjs";
-import { runWorkflowNext } from "../lib/workflow-cli.mjs";
+import { runWorkflowNext, workflowOutputIsUnsafe } from "../lib/workflow-cli.mjs";
 
 const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), ".codex");
 
@@ -63,15 +63,8 @@ function output(value) {
   process.stdout.write(`${JSON.stringify(redactSensitive(value))}\n`);
 }
 
-function unsafeWorkflowOutput(value) {
-  const forbidden = /(?:\/(?:private|tmp|Users)\/|-----BEGIN |\b(?:api[_-]?key|authorization|bearer|token|secret|password)\b)/i;
-  if (typeof value === "string") return forbidden.test(value);
-  if (Array.isArray(value)) return value.some(unsafeWorkflowOutput);
-  return value && typeof value === "object" && Object.values(value).some(unsafeWorkflowOutput);
-}
-
 function outputWorkflow(value) {
-  if (unsafeWorkflowOutput(value)) throw new TypeError("workflow output contains unsafe content");
+  if (workflowOutputIsUnsafe(value)) throw new TypeError("workflow output contains unsafe content");
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
