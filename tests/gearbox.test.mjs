@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import test from "node:test";
@@ -472,6 +472,18 @@ test("the active workflow contract is exact, current, and shared with its determ
   assert.match(current.sha256, /^[a-f0-9]{64}$/);
   assert.equal(current.evidence.scenarioCount, 5);
   assert.equal(current.evidence.passedScenarioCount, 5);
+});
+
+test("the active workflow contract rejects symlinked source and evidence parents", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gearbox-workflow-contract-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const directory of ["lib", "tests", "docs"]) {
+    await symlink(join(REPO_ROOT, directory), join(root, directory), "dir");
+  }
+  await assert.rejects(
+    readCurrentWorkflowContractEvidence(root),
+    /regular non-symlink repository file/i,
+  );
 });
 
 test("installed dispatch runtime has a complete relative-import closure", async () => {
