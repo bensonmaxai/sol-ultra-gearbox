@@ -388,9 +388,9 @@ test("parallel acceptance rejects every Q10 canary topology mutation", async () 
   const mutations = [
     (topology) => { topology.workflowCanary.firstRole = "terra_explorer"; },
     (topology) => { topology.workflowCanary.listObservedBetweenSpawns = false; },
-    (topology) => { topology.workflowCanary.listObservedBetweenSpawns = false; },
     (topology) => { topology.workflowCanary.listReceiptRunningOrCompleted = false; },
     (topology) => { topology.workflowCanary.firstChildPersisted = false; },
+    (topology) => { topology.workflowCanary.secondRole = "luna_clerk"; },
     (topology) => { topology.workflowCanary.secondSpawnAfterCanary = false; },
     (topology) => { topology.spawnsExact = false; },
     (topology) => { topology.messagesDistinct = false; },

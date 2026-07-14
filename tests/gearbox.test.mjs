@@ -563,13 +563,19 @@ test("rollout summary correlates a privacy-safe tool timeline", async (t) => {
   await writeFile(rollout, [
     JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "private-luna", name: "spawn_agent", arguments: '{"agent_type":"luna_clerk","message":"private"}' } }),
     JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "private-luna", output: '{"task":"private"}' } }),
-    JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "private-list", name: "list_agents", arguments: '{}' } }),
-    JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "private-list", output: '[{"status":"running"}]' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "private-list", name: "agents.list_agents", arguments: '{}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "private-list", output: '{"agents":[{"agent_name":"private","agent_status":"running"}]}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "private-completed", name: "list_agents", arguments: '{}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "private-completed", output: '{"agents":[{"agent_status":{"completed":"private result"}}]}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "private-missing", name: "list_agents", arguments: '{}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "uncorrelated", output: '{"agents":[{"agent_status":"running"}]}' } }),
   ].join("\n"), "utf8");
   const summary = await summarizeRollout(rollout);
   assert.deepEqual(summary.toolTimeline, [
     { name: "spawn_agent", callIndex: 0, outputPresent: true, outputSha256: sha256('{"task":"private"}'), runningOrCompleted: false },
-    { name: "list_agents", callIndex: 1, outputPresent: true, outputSha256: sha256('[{"status":"running"}]'), runningOrCompleted: true },
+    { name: "agents.list_agents", callIndex: 1, outputPresent: true, outputSha256: sha256('{"agents":[{"agent_name":"private","agent_status":"running"}]}'), runningOrCompleted: true },
+    { name: "list_agents", callIndex: 2, outputPresent: true, outputSha256: sha256('{"agents":[{"agent_status":{"completed":"private result"}}]}'), runningOrCompleted: true },
+    { name: "list_agents", callIndex: 3, outputPresent: false, outputSha256: null, runningOrCompleted: false },
   ]);
   assert.doesNotMatch(JSON.stringify(summary.toolTimeline), /private-luna|private-list|luna_clerk|private/);
 });

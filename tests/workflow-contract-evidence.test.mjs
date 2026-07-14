@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import {
   SCENARIOS,
@@ -6,6 +9,7 @@ import {
   buildWorkflowContractEvidence,
   validateWorkflowContractEvidence,
 } from "../lib/workflow-contract-evidence.mjs";
+import { repositoryPath } from "../scripts/workflow-contract-evidence.mjs";
 
 const CONTRACT = Object.freeze({
   stageOrderPreserved: true,
@@ -48,4 +52,20 @@ test("workflow contract artifact fails closed for source or contract drift", () 
   const contractDrift = structuredClone(artifact);
   contractDrift.scenarios[0].contract.privacySafeOutcome = false;
   assert.equal(validateWorkflowContractEvidence(contractDrift).pass, false);
+});
+
+test("workflow evidence path rejects escapes and every symlinked parent", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gearbox-workflow-evidence-root-"));
+  const outside = await mkdtemp(join(tmpdir(), "gearbox-workflow-evidence-outside-"));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  });
+  await mkdir(join(outside, "nested"));
+  await symlink(outside, join(root, "linked"));
+
+  assert.equal(await repositoryPath("evidence.json", root), join(await realpath(root), "evidence.json"));
+  await assert.rejects(repositoryPath("../escape.json", root), /escapes repository/);
+  await assert.rejects(repositoryPath("linked/nested/evidence.json", root), /symlink/);
+  await assert.rejects(repositoryPath(resolve(outside, "evidence.json"), root), /repository-relative/);
 });

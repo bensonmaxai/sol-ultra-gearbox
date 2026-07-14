@@ -233,6 +233,7 @@ function acceptanceReport(runtimeBinding = binding(), overrides = {}) {
     ["Q10_TWO_TYPED_READERS", "typed_child", "DELEGATE_TYPED_PERMISSION_MATCH"],
   ].map(([id, selectedShape, reasonCode]) => ({
     id, selectedShape, reasonCode, pass: true, runtime: true, cleanup: { pass: true },
+    ...(id === "Q10_TWO_TYPED_READERS" ? { workflowCanary: true } : {}),
     ...(id === "Q8_RUNTIME_MISMATCH_REJECTED" || id === "Q9_WRITE_VIOLATION_REJECTED"
       ? { rejected: true, violationDetected: true }
       : {}),

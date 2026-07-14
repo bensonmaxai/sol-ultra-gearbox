@@ -608,7 +608,7 @@ export async function runAcceptanceParallel(scenario, { decision = null } = {}) 
     const firstSpawnIndex = lunaSpawn?.callIndex;
     const secondSpawnIndex = terraSpawn?.callIndex;
     const listReceipt = (parent?.toolTimeline ?? []).find((entry) =>
-      entry?.name === "list_agents" && Number.isInteger(firstSpawnIndex) && Number.isInteger(secondSpawnIndex) &&
+      entry?.name?.endsWith("list_agents") && Number.isInteger(firstSpawnIndex) && Number.isInteger(secondSpawnIndex) &&
       entry.callIndex > firstSpawnIndex && entry.callIndex < secondSpawnIndex,
     );
     const workflowCanary = {
