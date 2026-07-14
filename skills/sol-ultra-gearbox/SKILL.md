@@ -217,7 +217,7 @@ the managed command; it disables the folder instead of deleting it.
 ## Prepare a public release
 
 Generate the paired machine-readable and Markdown evidence with
-`npm run release:evidence -- --smoke <path> --sdd <path> --acceptance <path> --usage <path>`, then
+`npm run release:evidence -- --smoke <path> --sdd <path> --acceptance <path> --activation-manifest <path> --usage <path>`, then
 run unit tests, `npm run release:check`, the official skill validator when
 available, and a local secret scanner. Keep raw reports, auth state, complete
 user config, rollout contents, and private filesystem paths out of Git.

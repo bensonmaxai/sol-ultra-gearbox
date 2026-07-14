@@ -18,6 +18,7 @@ import {
   ROLE_SPECS,
   RUNTIME_BINDING_FILES,
   sha256,
+  validatePostInstallRootRuntime,
   writeJson,
 } from "../lib/gearbox.mjs";
 import {
@@ -41,6 +42,7 @@ const REPORTS_ROOT = join(REPO_ROOT, "reports");
 const JSON_PATH = join(REPO_ROOT, "docs", "release-evidence.json");
 const MARKDOWN_PATH = join(REPO_ROOT, "docs", "RELEASE_EVIDENCE.md");
 const EXPECTED_ROOT = Object.freeze({ model: "gpt-5.6-sol", effort: "max" });
+const SHA256 = /^[a-f0-9]{64}$/;
 const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), ".codex");
 const APP_CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex";
 const CODEX_BIN =
@@ -141,17 +143,129 @@ async function reportCommitIsAncestor(report, currentBinding) {
   return result.code === 0;
 }
 
-function runtimeEvidenceCompatible(report, currentBinding, commitIsAncestor) {
+function runtimeEvidenceCompatible(
+  report,
+  currentBinding,
+  commitIsAncestor,
+  transition,
+) {
+  const directComponentsMatch = runtimeBindingComponentsMatch(
+    report?.runtimeBinding,
+    currentBinding,
+  );
+  const transitionComponentsMatch =
+    transition?.pass === true &&
+    report?.runtimeBinding?.configSha256 === transition.preInstallConfigSha256 &&
+    currentBinding?.configSha256 === transition.activeConfigSha256 &&
+    runtimeBindingComponentsMatch(
+      report?.runtimeBinding,
+      {
+        ...currentBinding,
+        configSha256: report?.runtimeBinding?.configSha256,
+      },
+    );
   return (
     validateRuntimeBinding(report?.runtimeBinding) &&
     validateRuntimeBinding(currentBinding) &&
     currentBinding.git.clean === true &&
     commitIsAncestor === true &&
-    runtimeBindingComponentsMatch(report.runtimeBinding, currentBinding)
+    (directComponentsMatch || transitionComponentsMatch)
   );
 }
 
-function summarizeRoleSmoke(report, currentBinding, commitIsAncestor) {
+function validateActiveTransition({
+  manifest,
+  manifestPath,
+  acceptanceReport,
+  currentBinding,
+  activeStatusResult,
+}) {
+  let activeStatus = null;
+  if (activeStatusResult?.code === 0) {
+    try {
+      activeStatus = JSON.parse(activeStatusResult.stdout.trim());
+    } catch {
+      activeStatus = null;
+    }
+  }
+  const rootValidation = validatePostInstallRootRuntime(
+    manifest?.postInstallRootSmoke?.actual,
+    { active: true },
+  );
+  const staticChecks = manifest?.staticChecks;
+  const preInstallConfigSha256 = manifest?.config?.beforeSha256;
+  const activeConfigSha256 = manifest?.config?.afterSha256;
+  const checks = {
+    manifestApplied:
+      manifest?.schemaVersion === 1 && manifest?.status === "applied",
+    manifestIdentity:
+      typeof manifest?.activation?.installId === "string" &&
+      manifest.activation.installId.length > 0 &&
+      manifest?.activation?.manifestPath === resolve(manifestPath) &&
+      typeof manifest?.activation?.repositoryRoot === "string" &&
+      resolve(manifest.activation.repositoryRoot) === REPO_ROOT,
+    configPaths:
+      manifest?.config?.path === join(CODEX_HOME, "config.toml"),
+    configTransition:
+      SHA256.test(preInstallConfigSha256 ?? "") &&
+      SHA256.test(activeConfigSha256 ?? "") &&
+      preInstallConfigSha256 !== activeConfigSha256 &&
+      acceptanceReport?.runtimeBinding?.configSha256 === preInstallConfigSha256 &&
+      currentBinding?.configSha256 === activeConfigSha256,
+    rollbackState:
+      manifest?.config?.rollbackState?.schemaVersion === 1 &&
+      manifest?.config?.rollbackState?.beforeSha256 === preInstallConfigSha256 &&
+      manifest?.config?.rollbackState?.managedBlocks !== null &&
+      typeof manifest?.config?.rollbackState?.managedBlocks === "object",
+    acceptanceBinding:
+      SHA256.test(manifest?.activation?.acceptanceBindingSha256 ?? "") &&
+      manifest.activation.acceptanceBindingSha256 ===
+        acceptanceReport?.runtimeBinding?.sha256,
+    staticChecks:
+      staticChecks !== null &&
+      typeof staticChecks === "object" &&
+      ["strictConfig", "configLoad", "mcpConfig", "installation"]
+        .every((key) => staticChecks[key] === true),
+    freshRoot:
+      manifest?.postInstallRootSmoke?.pass === true && rootValidation.pass,
+    activeStatus:
+      activeStatus?.status === "GEARBOX_DISPATCH_ACTIVE" &&
+      activeStatus?.mode === "active" &&
+      activeStatus?.integrity === "pass" &&
+      activeStatus?.allowTypedBridge === false &&
+      activeStatus?.configSha256 === activeConfigSha256 &&
+      activeStatus?.policySha256 === manifest?.activation?.policySha256,
+    policyHash: SHA256.test(manifest?.activation?.policySha256 ?? ""),
+  };
+  const failed = Object.entries(checks)
+    .filter(([, pass]) => !pass)
+    .map(([name]) => name);
+  if (failed.length > 0) {
+    throw new Error(`Active installation evidence failed: ${failed.join(", ")}`);
+  }
+  return {
+    pass: true,
+    preInstallConfigSha256,
+    activeConfigSha256,
+    summary: {
+      status: "pass",
+      mode: "active",
+      integrity: "pass",
+      allowTypedBridge: false,
+      installId: manifest.activation.installId,
+      policySha256: manifest.activation.policySha256,
+      preInstallConfigSha256,
+      activeConfigSha256,
+      root: {
+        persisted: true,
+        model: manifest.postInstallRootSmoke.actual.model,
+        effort: manifest.postInstallRootSmoke.actual.effort,
+      },
+    },
+  };
+}
+
+function summarizeRoleSmoke(report, currentBinding, commitIsAncestor, transition) {
   const roles = Array.isArray(report?.roles) ? report.roles : [];
   const bindingValid = validateRuntimeBinding(report?.runtimeBinding);
   const roleEvidence = validateRoleSmokeEvidence(
@@ -163,7 +277,7 @@ function summarizeRoleSmoke(report, currentBinding, commitIsAncestor) {
     roleEvidence.pass &&
     bindingValid &&
     report.runtimeBinding.git.clean === true &&
-    runtimeEvidenceCompatible(report, currentBinding, commitIsAncestor) &&
+    runtimeEvidenceCompatible(report, currentBinding, commitIsAncestor, transition) &&
     report?.runtimeBindingStable === true &&
     report?.runtimeBindingAfterSha256 === report.runtimeBinding.sha256;
   if (!pass) throw new Error("Role smoke report is incomplete, stale, or not bound to current HEAD");
@@ -188,12 +302,12 @@ function summarizeRoleSmoke(report, currentBinding, commitIsAncestor) {
   };
 }
 
-function summarizeSddAdapter(report, currentBinding, commitIsAncestor) {
+function summarizeSddAdapter(report, currentBinding, commitIsAncestor, transition) {
   const validation = validateSddAdapterEvidence(report);
   if (
     !validation.pass ||
     report.runtimeBinding.git.clean !== true ||
-    !runtimeEvidenceCompatible(report, currentBinding, commitIsAncestor)
+    !runtimeEvidenceCompatible(report, currentBinding, commitIsAncestor, transition)
   ) {
     throw new Error("SDD adapter report is incomplete, stale, or not bound to current HEAD");
   }
@@ -209,12 +323,12 @@ function summarizeSddAdapter(report, currentBinding, commitIsAncestor) {
   };
 }
 
-function summarizeAcceptanceExam(report, currentBinding, commitIsAncestor) {
+function summarizeAcceptanceExam(report, currentBinding, commitIsAncestor, transition) {
   const validation = validateAcceptanceEvidence(report);
   if (
     !validation.pass ||
     report.runtimeBinding.git.clean !== true ||
-    !runtimeEvidenceCompatible(report, currentBinding, commitIsAncestor)
+    !runtimeEvidenceCompatible(report, currentBinding, commitIsAncestor, transition)
   ) {
     throw new Error("Acceptance exam report is incomplete, stale, or not bound to current HEAD");
   }
@@ -290,7 +404,7 @@ async function main() {
   const [, , command, ...args] = process.argv;
   if (command !== "generate") {
     throw new Error(
-      "Usage: node scripts/release-evidence.mjs generate --smoke <reports/.../smoke.json> --sdd <reports/.../sdd.json> --acceptance <reports/.../acceptance.json> --usage <reports/.../real-work-usage.json> [--cost-ledger <path>]",
+      "Usage: node scripts/release-evidence.mjs generate --smoke <reports/.../smoke.json> --sdd <reports/.../sdd.json> --acceptance <reports/.../acceptance.json> --activation-manifest <reports/.../install-manifest.json> --usage <reports/.../real-work-usage.json> [--cost-ledger <path>]",
     );
   }
   const statusBefore = await runCommand("git", [
@@ -303,11 +417,27 @@ async function main() {
     throw new Error("Release evidence generation requires a clean Git tree");
   }
   const currentHead = headResult.stdout.trim();
-  const [tests, smokeReport, sddReport, acceptanceReport, usageReport, costStatus, currentBinding] = await Promise.all([
+  const activationManifestPath = optionValue(args, "--activation-manifest");
+  const [
+    tests,
+    smokeReport,
+    sddReport,
+    acceptanceReport,
+    activationManifest,
+    activeStatusResult,
+    usageReport,
+    costStatus,
+    currentBinding,
+  ] = await Promise.all([
     runTests(),
     readLocalReport(optionValue(args, "--smoke"), "smoke.json"),
     readLocalReport(optionValue(args, "--sdd"), "sdd.json"),
     readLocalReport(optionValue(args, "--acceptance"), "acceptance.json"),
+    readLocalReport(activationManifestPath, "install-manifest.json"),
+    runCommand(process.execPath, [
+      join(REPO_ROOT, "scripts", "gearbox-dispatch.mjs"),
+      "status",
+    ]),
     readLocalReport(optionValue(args, "--usage"), "real-work-usage.json"),
     loadCostStatus(
       optionValue(args, "--cost-ledger") ?? join(REPORTS_ROOT, "cost-evidence.json"),
@@ -317,6 +447,13 @@ async function main() {
   if (currentBinding.git.head !== currentHead || currentBinding.git.clean !== true) {
     throw new Error("Current runtime binding does not match the clean release HEAD");
   }
+  const transition = validateActiveTransition({
+    manifest: activationManifest,
+    manifestPath: activationManifestPath,
+    acceptanceReport,
+    currentBinding,
+    activeStatusResult,
+  });
   const [smokeCommitIsAncestor, sddCommitIsAncestor, acceptanceCommitIsAncestor] = await Promise.all([
     reportCommitIsAncestor(smokeReport, currentBinding),
     reportCommitIsAncestor(sddReport, currentBinding),
@@ -339,12 +476,24 @@ async function main() {
     source,
     tests,
     runtime: {
-      roleSmoke: summarizeRoleSmoke(smokeReport, currentBinding, smokeCommitIsAncestor),
-      sddAdapter: summarizeSddAdapter(sddReport, currentBinding, sddCommitIsAncestor),
+      activation: transition.summary,
+      roleSmoke: summarizeRoleSmoke(
+        smokeReport,
+        currentBinding,
+        smokeCommitIsAncestor,
+        transition,
+      ),
+      sddAdapter: summarizeSddAdapter(
+        sddReport,
+        currentBinding,
+        sddCommitIsAncestor,
+        transition,
+      ),
       acceptanceExam: summarizeAcceptanceExam(
         acceptanceReport,
         currentBinding,
         acceptanceCommitIsAncestor,
+        transition,
       ),
     },
     costEvidence: {

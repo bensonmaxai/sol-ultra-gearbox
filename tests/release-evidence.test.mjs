@@ -10,6 +10,7 @@ import {
   finalizeReleaseEvidence,
   renderReleaseEvidence,
   runtimeBindingComponentsMatch,
+  validateActiveInstallationSummary,
   validateReleaseEvidence,
 } from "../lib/release-evidence.mjs";
 
@@ -34,6 +35,21 @@ function evidence(source = sourceManifest()) {
       failed: 0,
     },
     runtime: {
+      activation: {
+        status: "pass",
+        mode: "active",
+        integrity: "pass",
+        allowTypedBridge: false,
+        installId: "gearbox-fixture",
+        policySha256: "c".repeat(64),
+        preInstallConfigSha256: "d".repeat(64),
+        activeConfigSha256: "e".repeat(64),
+        root: {
+          persisted: true,
+          model: "gpt-5.6-sol",
+          effort: "max",
+        },
+      },
       roleSmoke: {
         status: "pass",
         expectedRoleCount: 6,
@@ -115,6 +131,24 @@ test("release evidence validates exact source and rendered Markdown", () => {
   });
   assert.equal(result.pass, true);
   assert.equal(result.checks.acceptanceExam, true);
+  assert.equal(result.checks.activeInstallation, true);
+});
+
+test("active installation summary accepts only privacy-safe Sol Max or Ultra evidence", () => {
+  const value = evidence().runtime.activation;
+  assert.equal(validateActiveInstallationSummary(value).pass, true);
+  assert.equal(validateActiveInstallationSummary({
+    ...value,
+    root: { ...value.root, effort: "ultra" },
+  }).pass, true);
+  assert.equal(validateActiveInstallationSummary({
+    ...value,
+    root: { ...value.root, effort: "high" },
+  }).pass, false);
+  assert.equal(validateActiveInstallationSummary({
+    ...value,
+    manifestPath: "/private/report",
+  }).pass, false);
 });
 
 test("release evidence requires a sanitized, complete acceptance summary", () => {

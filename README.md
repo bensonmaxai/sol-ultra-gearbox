@@ -296,6 +296,7 @@ npm run release:evidence -- \
   --smoke reports/<run>/smoke.json \
   --sdd reports/<run>/sdd.json \
   --acceptance reports/<run>/acceptance.json \
+  --activation-manifest reports/<run>/install-manifest.json \
   --usage reports/<run>/real-work-usage.json
 ```
 
