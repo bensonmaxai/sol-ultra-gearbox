@@ -155,7 +155,7 @@ test("compiler fails closed for invalid plans, hashes, stages, and approval gate
   gated.stages[2].approvalGate = {
     authority: "owner",
     factId: "review-approved",
-    purpose: "stage_execution",
+    purpose: "role_opt_in",
   };
   const gatedHash = hashWorkflowPlan(gated);
   assert.throws(
@@ -184,6 +184,96 @@ test("compiler fails closed for invalid plans, hashes, stages, and approval gate
   );
 });
 
+test("compiler applies owner opt-in only to a matching role_opt_in gate", () => {
+  const plan = workflowPlan();
+  plan.stages[2] = {
+    ...plan.stages[2],
+    responsibility: "implementation",
+    requestedRole: "terra_ultra_specialist",
+    parentPermission: "workspace-write",
+    requiredPermission: "workspace-write",
+    writeScope: ["fixtures/src/specialist.mjs", "fixtures/tests/specialist.test.mjs"],
+    approvalGate: {
+      authority: "owner",
+      factId: "specialist-approved",
+      purpose: "role_opt_in",
+    },
+    costSignals: {
+      ...plan.stages[2].costSignals,
+      includesRegressionTest: true,
+      boundedFileCount: 2,
+    },
+  };
+  const planHash = hashWorkflowPlan(plan);
+  const packet = compileStagePacket({
+    plan,
+    planHash,
+    stageId: "verify-evidence",
+    approvalFacts: [{
+      authority: "owner",
+      factId: "specialist-approved",
+      scopeHash: planHash,
+    }],
+    batch: { requestedChildren: 1, writerCount: 1, scopesDisjoint: true },
+  });
+  assert.equal(packet.ownerOptIn, true);
+  assert.equal(planDispatchFor(packet).role, "terra_ultra_specialist");
+});
+
+test("compiler does not promote a stage_execution approval to specialist opt-in", () => {
+  const plan = workflowPlan();
+  plan.stages[2] = {
+    ...plan.stages[2],
+    responsibility: "implementation",
+    requestedRole: "terra_ultra_specialist",
+    parentPermission: "workspace-write",
+    requiredPermission: "workspace-write",
+    writeScope: ["fixtures/src/specialist.mjs", "fixtures/tests/specialist.test.mjs"],
+    approvalGate: {
+      authority: "owner",
+      factId: "stage-approved",
+      purpose: "stage_execution",
+    },
+    costSignals: {
+      ...plan.stages[2].costSignals,
+      includesRegressionTest: true,
+      boundedFileCount: 2,
+    },
+  };
+  const planHash = hashWorkflowPlan(plan);
+  const packet = compileStagePacket({
+    plan,
+    planHash,
+    stageId: "verify-evidence",
+    approvalFacts: [{
+      authority: "owner",
+      factId: "stage-approved",
+      scopeHash: planHash,
+    }],
+    batch: { requestedChildren: 1, writerCount: 1, scopesDisjoint: true },
+  });
+  assert.equal(packet.ownerOptIn, false);
+  assert.equal(planDispatchFor(packet).reasonCode, "ROOT_SCOPE_AMBIGUOUS");
+});
+
+test("compiler rejects a safe undeclared input artifact through plan validation", () => {
+  const plan = workflowPlan();
+  plan.stages[2] = {
+    ...plan.stages[2],
+    inputArtifacts: ["core-evidence", "cli-evidence", "missing-artifact"],
+  };
+  assert.throws(
+    () => compileStagePacket({
+      plan,
+      planHash: hashWorkflowPlan(plan),
+      stageId: "verify-evidence",
+      approvalFacts: [],
+      batch: { requestedChildren: 1, writerCount: 0, scopesDisjoint: true },
+    }),
+    /workflow plan must be valid and hash-bound/,
+  );
+});
+
 test("packet v2 rejects malformed workflow context without weakening v1", () => {
   const value = compiledPacket();
   const cases = [
@@ -191,7 +281,7 @@ test("packet v2 rejects malformed workflow context without weakening v1", () => 
     ["extra context field", (context) => context.extra = true],
     ["invalid plan hash", (context) => context.planHash = "not-a-hash"],
     ["unknown stage", (context) => context.stageId = "unknown stage"],
-    ["unknown artifact", (context) => context.inputArtifacts = ["unknown artifact"]],
+    ["unsafe artifact identifier", (context) => context.inputArtifacts = ["unknown artifact"]],
     ["unknown attempt class", (context) => context.attemptClass = "unknown"],
     ["invalid missing-information policy", (context) => context.missingInformationPolicy = "guess"],
   ];
@@ -202,6 +292,10 @@ test("packet v2 rejects malformed workflow context without weakening v1", () => 
   }
   assert.equal(validateWorkflowContext(value.workflowContext).pass, true);
   assert.equal(validateTaskPacket(packetV1()).pass, true);
+});
+
+test("packet validation rejects an unknown schema version", () => {
+  assert.equal(validateTaskPacket(packetV1({ schemaVersion: 3 })).pass, false);
 });
 
 test("v2 workflow sections precede the original nine sections in order", () => {

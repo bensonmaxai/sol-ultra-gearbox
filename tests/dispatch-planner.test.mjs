@@ -381,6 +381,10 @@ test("packet validation rejects every missing, unknown, and malformed top-level 
   assert.throws(() => plan({ schemaVersion: 1 }), /invalid task packet/);
 });
 
+test("packet validation rejects schema version 3", () => {
+  assert.equal(validateTaskPacket(packet({ schemaVersion: 3 })).pass, false);
+});
+
 test("packet hashes deterministically and messages contain all self-contained sections", () => {
   const reordered = Object.fromEntries(Object.entries(packet()).reverse());
   assert.match(hashTaskPacket(packet()), /^[a-f0-9]{64}$/);
