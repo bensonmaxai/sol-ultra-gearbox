@@ -10,6 +10,7 @@ import {
   finalizeReleaseEvidence,
   renderReleaseEvidence,
   runtimeBindingComponentsMatch,
+  validateActiveConfigBinding,
   validateActiveInstallationSummary,
   validateReleaseEvidence,
 } from "../lib/release-evidence.mjs";
@@ -139,6 +140,10 @@ test("active installation summary accepts only privacy-safe Sol Max or Ultra evi
   assert.equal(validateActiveInstallationSummary(value).pass, true);
   assert.equal(validateActiveInstallationSummary({
     ...value,
+    activeConfigSha256: value.preInstallConfigSha256,
+  }).pass, true);
+  assert.equal(validateActiveInstallationSummary({
+    ...value,
     root: { ...value.root, effort: "ultra" },
   }).pass, true);
   assert.equal(validateActiveInstallationSummary({
@@ -149,6 +154,28 @@ test("active installation summary accepts only privacy-safe Sol Max or Ultra evi
     ...value,
     manifestPath: "/private/report",
   }).pass, false);
+});
+
+test("active config binding accepts idempotent apply and rejects binding drift", () => {
+  const digest = "a".repeat(64);
+  assert.equal(validateActiveConfigBinding({
+    preInstallConfigSha256: digest,
+    activeConfigSha256: digest,
+    acceptanceConfigSha256: digest,
+    currentConfigSha256: digest,
+  }), true);
+  assert.equal(validateActiveConfigBinding({
+    preInstallConfigSha256: digest,
+    activeConfigSha256: "b".repeat(64),
+    acceptanceConfigSha256: digest,
+    currentConfigSha256: "c".repeat(64),
+  }), false);
+  assert.equal(validateActiveConfigBinding({
+    preInstallConfigSha256: "invalid",
+    activeConfigSha256: digest,
+    acceptanceConfigSha256: "invalid",
+    currentConfigSha256: digest,
+  }), false);
 });
 
 test("release evidence requires a sanitized, complete acceptance summary", () => {

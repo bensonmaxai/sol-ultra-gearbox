@@ -272,6 +272,7 @@ test("renderAgentsMd replaces the workflow section and preserves neighbors", () 
 test("managed policy gates skill-driven delegation and unknown skills", () => {
   assert.match(WORKFLOW_POLICY, /Skill-driven Delegation Compatibility Gate/);
   assert.match(WORKFLOW_POLICY, /pre-spawn compatibility gate/);
+  assert.match(WORKFLOW_POLICY, /executing-plans/);
   assert.match(WORKFLOW_POLICY, /subagent-driven-development/);
   assert.match(WORKFLOW_POLICY, /dispatching-parallel-agents/);
   assert.match(WORKFLOW_POLICY, /requesting-code-review/);
@@ -287,6 +288,9 @@ test("managed policy gates skill-driven delegation and unknown skills", () => {
   assert.match(WORKFLOW_POLICY, /非-Ultra root 下依序建立單一 typed child/);
   assert.match(WORKFLOW_POLICY, /parent permission.*read-only/);
   assert.match(WORKFLOW_POLICY, /Sol root 自行 task review/);
+  assert.match(WORKFLOW_POLICY, /isolatedRunnerVerified/);
+  assert.match(WORKFLOW_POLICY, /isolated.*不需要.*agent_type/i);
+  assert.match(WORKFLOW_POLICY, /沒有.*child.*fork N\/A/i);
 });
 
 test("typed spawn validation rejects generic, untyped, and overridden children", () => {

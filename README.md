@@ -44,7 +44,8 @@ automatic route or the default upgrade from `terra_worker`.
 ## Safety model
 
 - Inspect the current task's spawn schema. Never create an untyped child when
-  `agent_type` is unavailable.
+  `agent_type` is unavailable. A separately verified Luna/Terra read-only
+  isolated root may still run because it is not a child.
 - Always use `fork_turns="none"` for typed roles. Let role TOML own model,
   reasoning effort, and sandbox settings.
 - Allow at most two direct children, depth 1, and no descendant agents.
@@ -74,8 +75,9 @@ full decision table.
 ## Skill-driven delegation compatibility
 
 Installed workflow skills remain available to the Sol root. Gearbox does not
-replace their planning, review, or artifact flow. Instead, immediately before
-an actual `spawn_agent` call, the managed policy applies a pre-spawn
+replace their planning, review, or artifact flow. Instead, before
+`executing-plans` rules out delegation and immediately before an actual
+`spawn_agent` call or managed isolated dispatch, the managed policy applies a
 compatibility gate that:
 
 - keeps sequential skill adapters on the lightest sufficient Sol root and
@@ -92,8 +94,8 @@ compatibility gate that:
 - fails closed for unknown skills or incompatible requirements instead of
   using an untyped or parent-inherited child.
 
-Known adapters cover Superpowers subagent-driven development, parallel
-dispatch, code review, and Codex Security repository or diff scans. Exact
+Known adapters cover Superpowers executing plans, subagent-driven development,
+parallel dispatch, code review, and Codex Security repository or diff scans. Exact
 behavior, conflict handling, and unsupported workflow fallbacks are documented
 in the
 [subagent skill compatibility matrix](skills/sol-ultra-gearbox/references/subagent-skill-compatibility.md).
@@ -117,18 +119,19 @@ gates. Quality is always checked before cost, so an available cheaper role
 cannot reverse a quality rejection.
 
 Build a self-contained packet only when delegation is intended, then run
-`gearbox-dispatch plan` with the packet, current spawn-schema capability, and
-parent-permission facts. The possible shapes are:
+`gearbox-dispatch plan` with the packet, separate native-spawn and
+isolated-runner capabilities, runtime metadata, and parent-permission facts.
+The possible shapes are:
 
 | Shape | Meaning |
 |---|---|
 | `root_inline` | Sol completes the work after a failed gate or unsafe permission shape. |
 | `typed_child` | Sol calls the exact typed `spawn_agent` arguments only when permissions match. |
-| `isolated_role_root` | Direct Luna/Terra read-only work in a separate isolated root when parent permission would not match. It is never a child. |
+| `isolated_role_root` | Luna/Terra read-only work in a verified separate root when native `agent_type` is unavailable or parent permission would not match. It is never a child. |
 | `typed_child_bridge` | Disabled for first activation with `allowTypedBridge=false`. |
 
-Unknown skills, generic roles, missing typed capability flags, and missing or
-mismatched runtime evidence remain root-inline. A cheap role gets one initial
+Unknown skills, generic roles, no verified native-or-isolated execution
+surface, and missing or mismatched runtime evidence remain root-inline. A cheap role gets one initial
 attempt and at most one correction for a concrete local output defect; identity,
 permission, scope, cleanup, policy, ambiguity, or hidden-coupling failures do
 not retry. Trusted current ten-question acceptance evidence and an applied

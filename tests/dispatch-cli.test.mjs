@@ -235,6 +235,7 @@ test("status and plan use an integrity-bound shadow policy and consume only the 
   const result = await run([
     "plan", "--packet", path, "--consume",
     "--agent-type-visible", "true",
+    "--isolated-runner-verified", "true",
     "--runtime-metadata-available", "true",
     "--permissions-enforced", "true",
   ], { CODEX_HOME: home });
@@ -252,13 +253,24 @@ test("plan fails closed when current capability facts are missing or unsafe", as
   assert.equal(missing.decision.selectedShape, "root_inline");
   assert.equal(missing.decision.reasonCode, "ROOT_SCHEMA_UNAVAILABLE");
 
+  const isolated = jsonOnly(await run([
+    "plan", "--packet", path,
+    "--agent-type-visible", "false",
+    "--isolated-runner-verified", "true",
+    "--runtime-metadata-available", "true",
+    "--permissions-enforced", "true",
+  ], { CODEX_HOME: home }));
+  assert.equal(isolated.decision.selectedShape, "isolated_role_root");
+  assert.equal(isolated.decision.reasonCode, "DELEGATE_ISOLATED_SCHEMA_UNAVAILABLE");
+
   for (const [flag, value, reason] of [
-    ["--agent-type-visible", "false", "ROOT_SCHEMA_UNAVAILABLE"],
+    ["--isolated-runner-verified", "false", "ROOT_ISOLATED_RUNNER_UNAVAILABLE"],
     ["--runtime-metadata-available", "false", "ROOT_RUNTIME_EVIDENCE_FAILED"],
     ["--permissions-enforced", "false", "ROOT_HIGH_RISK"],
   ]) {
     const capabilities = [
-      "--agent-type-visible", flag === "--agent-type-visible" ? value : "true",
+      "--agent-type-visible", "true",
+      "--isolated-runner-verified", flag === "--isolated-runner-verified" ? value : "true",
       "--runtime-metadata-available", flag === "--runtime-metadata-available" ? value : "true",
       "--permissions-enforced", flag === "--permissions-enforced" ? value : "true",
     ];
@@ -395,7 +407,7 @@ test("active isolated execution materializes only allowed read scope and never r
   await writeFile(join(home, "agents", "terra-explorer.toml"), await readFile(join(REPO_ROOT, "roles", "terra-explorer.toml"), "utf8"));
   const fake = await fakeCodex(join(home, "fake-codex.mjs"));
   await writeFile(path, `${JSON.stringify(packet({ readScope: ["allowed"] }))}\n`, { mode: 0o600 });
-  const capabilityArgs = ["--agent-type-visible", "true", "--runtime-metadata-available", "true", "--permissions-enforced", "true"];
+  const capabilityArgs = ["--agent-type-visible", "false", "--isolated-runner-verified", "true", "--runtime-metadata-available", "true", "--permissions-enforced", "true"];
   const env = { CODEX_HOME: home, CODEX_BIN: fake, FAKE_CLI_LOG: log, FAKE_CLI_ESCAPE: escape, TMPDIR: isolatedTmp };
   const missingCapabilities = await run(["run-isolated", "--packet", path], env, source);
   assert.equal(missingCapabilities.code, 1);
@@ -403,7 +415,9 @@ test("active isolated execution materializes only allowed read scope and never r
   await assert.rejects(access(log));
   const success = await run(["run-isolated", "--packet", path, ...capabilityArgs], env, source);
   assert.equal(success.code, 0, success.stdout);
-  assert.equal(jsonOnly(success).status, "GEARBOX_DISPATCH_RESULT");
+  const successOutput = jsonOnly(success);
+  assert.equal(successOutput.status, "GEARBOX_DISPATCH_RESULT");
+  assert.equal(successOutput.result.reasonCode, successOutput.decision.reasonCode);
   assert.match(success.stdout, /verified/);
   const successLog = JSON.parse(await readFile(log, "utf8"));
   assert.deepEqual(successLog, {

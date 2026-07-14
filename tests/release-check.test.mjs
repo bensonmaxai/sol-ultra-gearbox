@@ -62,6 +62,9 @@ test("managed policy and bundled skill publish the quality-first dispatch contra
     assert.match(value, /one correction/i);
     assert.match(value, /unsupported direct `spawn_agent` calls/i);
     assert.match(value, /not intercepted by this repository/i);
+    assert.match(value, /executing-plans/);
+    assert.match(value, /isolatedRunnerVerified/);
+    assert.match(value, /fork N\/A/);
   }
   assert.match(source, /isolated root, never a child/i);
   assert.match(source, /references\/quality-first-dispatch\.md/);

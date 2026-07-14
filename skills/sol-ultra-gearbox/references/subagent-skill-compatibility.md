@@ -5,11 +5,13 @@ dispatch child agents. Workflow skills remain active on the Sol root. Gearbox
 does not replace their planning, review loops, artifact handoffs, or acceptance
 criteria.
 
-The compatibility gate runs immediately before an actual `spawn_agent` call or
+The compatibility gate runs before `executing-plans` decides that subagents
+are unavailable, and immediately before an actual `spawn_agent` call or
 equivalent dispatch intent. Merely mentioning subagents, multi-agent work, or
 spawn behavior does not trigger it. Supported actual delegation must first run
-`gearbox-dispatch plan` with the self-contained packet and current schema plus
-parent-permission facts. Quality passes before cost is considered.
+`gearbox-dispatch plan` with the self-contained packet plus separate native
+schema, isolated-runner, runtime-metadata, and parent-permission facts. Quality
+passes before cost is considered.
 
 ## Pre-spawn compatibility gate
 
@@ -25,10 +27,12 @@ Apply these checks in order and stop at the first failure:
    remove a required independent verdict, or change an external action into a
    different task.
 5. Translate the requested responsibility to an installed typed role.
-6. Confirm the current spawn schema exposes `agent_type` and that parent
-   permissions match the role sandbox. A read-only Luna/Terra mismatch may use
-   `isolated_role_root` through `gearbox-dispatch run-isolated`; it is an
-   isolated root, never a child. A writer mismatch stays root-inline.
+6. Confirm native child capability with `agentTypeVisible` and isolated-root
+   capability with `isolatedRunnerVerified`. A read-only Luna/Terra phase may
+   use `isolated_role_root` through `gearbox-dispatch run-isolated` when native
+   schema is unavailable or parent permission mismatches; it is an isolated
+   root, never a child. A writer mismatch or writer without native typed
+   capability stays root-inline.
 7. Spawn with `agent_type`, `fork_turns="none"`, a self-contained message, and
    no model, reasoning-effort, or service-tier override.
 8. Keep at most two direct children active, depth 1, no descendants, and one
@@ -39,7 +43,8 @@ Apply these checks in order and stop at the first failure:
    unverified when metadata is unavailable.
 
 Generic `default`, `general-purpose`, `worker`, and `reviewer` agent types are
-not Gearbox fallbacks. A missing or generic `agent_type` fails the gate.
+not Gearbox fallbacks. A missing or generic `agent_type` fails the native-child
+gate but does not block a verified read-only isolated root.
 `typed_child_bridge` is disabled for first activation with
 `allowTypedBridge=false`; do not substitute it for a parent-permission mismatch.
 
@@ -60,6 +65,7 @@ generic worker.
 
 | Workflow skill | Adapter | Fail-closed boundary |
 |---|---|---|
+| `superpowers:executing-plans` | Preserve plan order and review checkpoints. Before choosing root-only execution, classify bounded phases through the Gearbox planner. Use the SDD adapter when native typed children are available; without `agent_type`, only qualifying Luna/Terra read-only phases may use the verified isolated runner. | Do not reinterpret the whole plan as parallel work. Implementation writers remain on the Sol root unless native typed capability exists; isolated writer execution is not enabled by this adapter. |
 | `superpowers:subagent-driven-development` | Sol root owns the plan and progress ledger. Dispatch a fresh `terra_worker` implementer or fixer. Use `sol_reviewer` only in a later parent phase whose permission mode matches read-only; otherwise the Sol root performs task review. Put the required TDD and test contract in the self-contained brief because child workflow plugins remain disabled. Writers remain sequential. Sol root integrates and performs final adjudication. | Do not pass the workflow's explicit model override. Never launch the read-only reviewer from a broader workspace-write parent. If permission switching, exclusive write scope, or a typed final review cannot be preserved, keep that phase on the Sol root. |
 | `superpowers:dispatching-parallel-agents` | Translate each independent responsibility to a typed role and run at most two direct children per batch. Prefer read-only evidence batches before a separate writer round. | Do not use generic agents, overlapping writers, shared mutable state, or nested dispatch. |
 | `superpowers:requesting-code-review` | Send exact requirements, diff, and existing test evidence to `sol_reviewer`. Route accepted fixes separately to one `terra_worker` or keep them on the Sol root. | The reviewer never edits, reimplements, or reruns the whole task without a concrete reason. |

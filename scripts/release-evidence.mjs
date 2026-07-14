@@ -26,6 +26,7 @@ import {
   finalizeReleaseEvidence,
   renderReleaseEvidence,
   runtimeBindingComponentsMatch,
+  validateActiveConfigBinding,
 } from "../lib/release-evidence.mjs";
 import { releaseCandidateFiles } from "../lib/release-check.mjs";
 import { validateAcceptanceEvidence } from "../lib/acceptance-exam.mjs";
@@ -206,12 +207,12 @@ function validateActiveTransition({
       resolve(manifest.activation.repositoryRoot) === REPO_ROOT,
     configPaths:
       manifest?.config?.path === join(CODEX_HOME, "config.toml"),
-    configTransition:
-      SHA256.test(preInstallConfigSha256 ?? "") &&
-      SHA256.test(activeConfigSha256 ?? "") &&
-      preInstallConfigSha256 !== activeConfigSha256 &&
-      acceptanceReport?.runtimeBinding?.configSha256 === preInstallConfigSha256 &&
-      currentBinding?.configSha256 === activeConfigSha256,
+    configBinding: validateActiveConfigBinding({
+      preInstallConfigSha256,
+      activeConfigSha256,
+      acceptanceConfigSha256: acceptanceReport?.runtimeBinding?.configSha256,
+      currentConfigSha256: currentBinding?.configSha256,
+    }),
     rollbackState:
       manifest?.config?.rollbackState?.schemaVersion === 1 &&
       manifest?.config?.rollbackState?.beforeSha256 === preInstallConfigSha256 &&

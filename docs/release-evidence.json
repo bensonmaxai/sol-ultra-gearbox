@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-14T00:06:23.583Z",
+  "generatedAt": "2026-07-14T04:15:07.318Z",
   "source": {
     "algorithm": "sha256",
     "fileCount": 58,
-    "sha256": "864488472c0dd1e440dac56e11d8d0d6c4dea1904021a8d31ecec3b1e4360c21",
-    "commit": "0020bc31907dcc416bb0da95d7ad159c62ce2ab3"
+    "sha256": "dc59d475e03c8c8ebd5e68ed1018f33ea101ea6670e67a8b7b0bb151adb6e636",
+    "commit": "e4164b3bf06d3e8a800d2664f3164e87e7d5e958"
   },
   "tests": {
     "status": "pass",
     "command": "node --test --test-reporter=tap",
-    "total": 129,
-    "passed": 129,
+    "total": 134,
+    "passed": 134,
     "failed": 0
   },
   "runtime": {
@@ -20,33 +20,33 @@
       "mode": "active",
       "integrity": "pass",
       "allowTypedBridge": false,
-      "installId": "gearbox-20260713235647",
-      "policySha256": "0140b1ec85943b11310f42463606b109d4e52247be30ff37105c107d4359497c",
-      "preInstallConfigSha256": "b18f26faa459bc2c14b343906c75bb5e6d964ff49d53d92f6ffd0913261a2928",
-      "activeConfigSha256": "ca9c41de6987f63210d1ecc86f6de4740da6d85fba654a0843d408c8f8bd007a",
+      "installId": "gearbox-20260714041324",
+      "policySha256": "9892e7416cdafd4d59158de1bbac9ac97a7955934699fda92675613da5184303",
+      "preInstallConfigSha256": "5ccfcec350d89400619808a7d7613bcec73810e48bd205756bdd66cf18bfb13f",
+      "activeConfigSha256": "5ccfcec350d89400619808a7d7613bcec73810e48bd205756bdd66cf18bfb13f",
       "root": {
         "persisted": true,
         "model": "gpt-5.6-sol",
-        "effort": "max"
+        "effort": "ultra"
       }
     },
     "roleSmoke": {
       "status": "pass",
-      "generatedAt": "2026-07-13T23:54:29.491Z",
+      "generatedAt": "2026-07-14T04:11:04.007Z",
       "expectedRoleCount": 6,
       "passedRoleCount": 6,
       "rootVerified": true,
-      "commit": "bf69f35c6ac581b049d4c34e0ccc8a801dff1a85",
-      "validatedAtCommit": "0020bc31907dcc416bb0da95d7ad159c62ce2ab3",
-      "runtimeBindingSha256": "fdbd3636d6911ccd9b5e52402a4eb7e7733201621f51be58287f163a80219ee4",
+      "commit": "e4164b3bf06d3e8a800d2664f3164e87e7d5e958",
+      "validatedAtCommit": "e4164b3bf06d3e8a800d2664f3164e87e7d5e958",
+      "runtimeBindingSha256": "b5c8926c9450ea9fa5cea540c70e66fdd85972c624c733c68dc1012144b5a6fe",
       "roles": [
         {
           "role": "luna_clerk",
           "model": "gpt-5.6-luna",
           "effort": "low",
           "sandbox": "read-only",
-          "parentTokens": 54603,
-          "childTokens": 40693,
+          "parentTokens": 40017,
+          "childTokens": 26462,
           "pass": true
         },
         {
@@ -54,8 +54,8 @@
           "model": "gpt-5.6-terra",
           "effort": "medium",
           "sandbox": "read-only",
-          "parentTokens": 40408,
-          "childTokens": 26838,
+          "parentTokens": 39919,
+          "childTokens": 26470,
           "pass": true
         },
         {
@@ -63,8 +63,8 @@
           "model": "gpt-5.6-terra",
           "effort": "high",
           "sandbox": "workspace-write",
-          "parentTokens": 41493,
-          "childTokens": 71615,
+          "parentTokens": 40992,
+          "childTokens": 69404,
           "pass": true
         },
         {
@@ -72,8 +72,8 @@
           "model": "gpt-5.6-sol",
           "effort": "high",
           "sandbox": "read-only",
-          "parentTokens": 40364,
-          "childTokens": 55208,
+          "parentTokens": 40156,
+          "childTokens": 40549,
           "pass": true
         },
         {
@@ -81,8 +81,8 @@
           "model": "gpt-5.6-terra",
           "effort": "ultra",
           "sandbox": "workspace-write",
-          "parentTokens": 41462,
-          "childTokens": 27778,
+          "parentTokens": 41059,
+          "childTokens": 41460,
           "pass": true
         },
         {
@@ -90,28 +90,28 @@
           "model": "gpt-5.6-terra",
           "effort": "max",
           "sandbox": "workspace-write",
-          "parentTokens": 41359,
-          "childTokens": 73344,
+          "parentTokens": 41020,
+          "childTokens": 57742,
           "pass": true
         }
       ]
     },
     "sddAdapter": {
       "status": "pass",
-      "generatedAt": "2026-07-13T23:51:01.467Z",
+      "generatedAt": "2026-07-14T04:14:50.964Z",
       "phases": [
         "terra_worker",
         "sol_reviewer"
       ],
       "permissionStrategy": "sequential_isolated_roots",
       "verification": "adapter_contract",
-      "commit": "bf69f35c6ac581b049d4c34e0ccc8a801dff1a85",
-      "validatedAtCommit": "0020bc31907dcc416bb0da95d7ad159c62ce2ab3",
-      "runtimeBindingSha256": "fdbd3636d6911ccd9b5e52402a4eb7e7733201621f51be58287f163a80219ee4"
+      "commit": "e4164b3bf06d3e8a800d2664f3164e87e7d5e958",
+      "validatedAtCommit": "e4164b3bf06d3e8a800d2664f3164e87e7d5e958",
+      "runtimeBindingSha256": "b5c8926c9450ea9fa5cea540c70e66fdd85972c624c733c68dc1012144b5a6fe"
     },
     "acceptanceExam": {
       "pass": true,
-      "generatedAt": "2026-07-13T23:56:47.872Z",
+      "generatedAt": "2026-07-14T04:13:24.508Z",
       "questionCount": 10,
       "passedQuestionCount": 10,
       "executionShapes": [
@@ -120,7 +120,7 @@
         "typed_child"
       ],
       "activeEligible": true,
-      "runtimeBindingSha256": "fdbd3636d6911ccd9b5e52402a4eb7e7733201621f51be58287f163a80219ee4"
+      "runtimeBindingSha256": "b5c8926c9450ea9fa5cea540c70e66fdd85972c624c733c68dc1012144b5a6fe"
     }
   },
   "costEvidence": {
@@ -200,5 +200,5 @@
     "coreRuntimeHook": "out_of_scope",
     "costEstimator": "gated_until_10_complete_pairs"
   },
-  "renderedMarkdownSha256": "9def6036462c906459b9ee210d05d69193c230a691dd701dbe969f38ab61b692"
+  "renderedMarkdownSha256": "aabef3ec755f9d8fcb94acc6991456d0060bed7473503244a3a8c8a8ce369d76"
 }
