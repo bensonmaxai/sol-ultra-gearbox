@@ -153,3 +153,30 @@ test("covers attempt classes, role names, and recovery reserve", () => {
     plan.attemptBudget.reservedForRecovery = 0;
   }), /enough recovery/);
 });
+
+test("returns validation errors when dependsOn is not iterable", () => {
+  const plan = clonedPlan();
+  plan.stages[0].dependsOn = 42;
+  let result;
+  assert.doesNotThrow(() => result = validateWorkflowPlan(plan, OPTIONS));
+  assert.equal(result.pass, false);
+  assert.match(result.errors.join("\n"), /dependsOn must be an array of non-empty strings/);
+});
+
+test("returns validation errors when inputArtifacts is not iterable", () => {
+  const plan = clonedPlan();
+  plan.stages[0].inputArtifacts = 42;
+  let result;
+  assert.doesNotThrow(() => result = validateWorkflowPlan(plan, OPTIONS));
+  assert.equal(result.pass, false);
+  assert.match(result.errors.join("\n"), /inputArtifacts must be an array of non-empty strings/);
+});
+
+test("rejects a stage output that collides with a plan input artifact", () => {
+  const plan = clonedPlan();
+  plan.stages[1].outputArtifacts = ["repository-snapshot"];
+  plan.stages[2].inputArtifacts = ["core-evidence", "repository-snapshot"];
+  const result = validateWorkflowPlan(plan, OPTIONS);
+  assert.equal(result.pass, false);
+  assert.match(result.errors.join("\n"), /multiple producers for artifact: repository-snapshot/);
+});
