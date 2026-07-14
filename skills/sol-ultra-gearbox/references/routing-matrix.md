@@ -37,7 +37,7 @@ run `gearbox-dispatch plan`. The planner selects exactly one shape:
 |---|---|
 | `root_inline` | Any rejected gate, high-risk work, or writer permission mismatch. |
 | `typed_child` | Typed capability is visible and parent/role permissions match. |
-| `isolated_role_root` | Read-only Luna/Terra work passes all gates but cannot safely inherit parent permission; this is an isolated root, never a child. |
+| `isolated_role_root` | Read-only Luna/Terra work passes all gates and the isolated runner is verified, but native `agent_type` is unavailable or parent permission cannot be inherited safely; this is an isolated root, never a child. |
 | `typed_child_bridge` | Disabled in the first active release (`allowTypedBridge=false`); never infer availability. |
 
 `off` makes no automatic decision, `shadow` records a root-inline outcome, and

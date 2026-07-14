@@ -60,6 +60,7 @@ function packet(overrides = {}) {
 const ACTIVE = { mode: "active", allowTypedBridge: false };
 const CAPABILITIES = {
   agentTypeVisible: true,
+  isolatedRunnerVerified: true,
   runtimeMetadataAvailable: true,
   bridgeRuntimeVerified: false,
   permissionBypassActive: false,
@@ -88,6 +89,83 @@ test("valid packet selects an isolated Terra root for read-only permission misma
   );
   assert.equal(decision.spawnArgs, null);
   assert.equal(decision.requiresRuntimeEvidence, true);
+});
+
+test("executing-plans is a known adapter for bounded delegated phases", () => {
+  const decision = plan(packet({
+    workflowAdapter: "superpowers:executing-plans",
+  }));
+  assert.equal(decision.selectedShape, "isolated_role_root");
+  assert.equal(decision.reasonCode, "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH");
+});
+
+test("verified isolated reads do not require the native child schema", () => {
+  const decision = plan(packet(), {
+    capabilities: {
+      ...CAPABILITIES,
+      agentTypeVisible: false,
+      isolatedRunnerVerified: true,
+    },
+  });
+  assert.equal(decision.selectedShape, "isolated_role_root");
+  assert.equal(decision.effectiveShape, "isolated_role_root");
+  assert.equal(decision.reasonCode, "DELEGATE_ISOLATED_SCHEMA_UNAVAILABLE");
+  assert.equal(decision.spawnArgs, null);
+});
+
+test("missing native schema never promotes an implementation writer to an isolated root", () => {
+  const value = packet({
+    responsibility: "implementation",
+    requiredPermission: "workspace-write",
+    writeScope: ["fixtures/src/fix.mjs", "fixtures/tests/fix.test.mjs"],
+    parentPermission: "workspace-write",
+    batch: {
+      requestedChildren: 1,
+      writerCount: 1,
+      scopesDisjoint: true,
+    },
+    costSignals: {
+      ...packet().costSignals,
+      includesRegressionTest: true,
+      boundedFileCount: 2,
+    },
+  });
+  const decision = plan(value, {
+    capabilities: {
+      ...CAPABILITIES,
+      agentTypeVisible: false,
+      isolatedRunnerVerified: true,
+    },
+  });
+  assert.equal(decision.selectedShape, "root_inline");
+  assert.equal(decision.reasonCode, "ROOT_SCHEMA_UNAVAILABLE");
+});
+
+test("missing native schema never satisfies a native-lineage requirement with an isolated root", () => {
+  const value = packet({
+    parentPermission: "read-only",
+    requiresNativeLineage: true,
+  });
+  const capabilities = {
+    ...CAPABILITIES,
+    agentTypeVisible: false,
+    isolatedRunnerVerified: true,
+  };
+  const decision = plan(value, {
+    capabilities,
+  });
+  assert.equal(decision.selectedShape, "root_inline");
+  assert.equal(decision.reasonCode, "ROOT_BRIDGE_DISABLED");
+
+  const bridged = plan(value, {
+    policy: { mode: "active", allowTypedBridge: true },
+    capabilities: {
+      ...capabilities,
+      bridgeRuntimeVerified: true,
+    },
+  });
+  assert.equal(bridged.selectedShape, "typed_child_bridge");
+  assert.equal(bridged.reasonCode, "DELEGATE_BRIDGE_LINEAGE_REQUIRED");
 });
 
 test("planner keeps trivial, risky, unknown, and writer-mismatch work on Sol", () => {
@@ -151,9 +229,16 @@ test("shadow records the recommendation but executes root-inline", () => {
   assert.equal(decision.reasonCode, "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH");
 });
 
-test("schema and runtime availability fail closed", () => {
+test("native schema, isolated runner, and runtime availability fail closed independently", () => {
   const cases = [
-    [{ ...CAPABILITIES, agentTypeVisible: false }, "ROOT_SCHEMA_UNAVAILABLE"],
+    [
+      { ...CAPABILITIES, agentTypeVisible: false, isolatedRunnerVerified: false },
+      "ROOT_SCHEMA_UNAVAILABLE",
+    ],
+    [
+      { ...CAPABILITIES, isolatedRunnerVerified: false },
+      "ROOT_ISOLATED_RUNNER_UNAVAILABLE",
+    ],
     [{ ...CAPABILITIES, runtimeMetadataAvailable: false }, "ROOT_RUNTIME_EVIDENCE_FAILED"],
   ];
   for (const [capabilities, reasonCode] of cases) {

@@ -122,7 +122,7 @@ function acceptanceReport(runtimeBinding = binding(), overrides = {}) {
   const questions = [
     ["Q1_ROOT_TRIVIAL", "root_inline", "ROOT_TRIVIAL"],
     ["Q2_ISOLATED_LUNA", "isolated_role_root", "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH"],
-    ["Q3_ISOLATED_TERRA", "isolated_role_root", "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH"],
+    ["Q3_ISOLATED_TERRA_NO_NATIVE_SCHEMA", "isolated_role_root", "DELEGATE_ISOLATED_SCHEMA_UNAVAILABLE"],
     ["Q4_TYPED_WORKER", "typed_child", "DELEGATE_TYPED_PERMISSION_MATCH"],
     ["Q5_ROOT_HIGH_RISK", "root_inline", "ROOT_HIGH_RISK"],
     ["Q6_UNKNOWN_SKILL", "root_inline", "ROOT_UNKNOWN_SKILL"],

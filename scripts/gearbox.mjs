@@ -415,6 +415,7 @@ export async function runAcceptanceIsolated(scenario, {
       codexBin, codexHome, roleSpec: spec,
       roleSource: await readFile(rolePath(spec), "utf8"), cwd: fixture, task,
       taskHash: sha256(task),
+      reasonCode: decision?.reasonCode,
       onDeliverable: async (value) => {
         deliverableValid = validateAcceptanceDeliverable(scenario.id, value);
         return deliverableValid;
@@ -1328,7 +1329,7 @@ async function runAcceptanceAll({ roleSmoke = null } = {}) {
     planScenario: (scenario) => planAcceptanceScenario({
       scenario,
       policy: { mode: "active", allowTypedBridge: false },
-      capabilities: { agentTypeVisible: true, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
+      capabilities: { agentTypeVisible: true, isolatedRunnerVerified: true, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
       roleSpecs: ROLE_SPECS,
     }),
     onQuestion: (question) => process.stdout.write(`QUESTION ${question.id} ${question.pass ? "PASS" : "FAIL"}\n`),

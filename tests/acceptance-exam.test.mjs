@@ -23,7 +23,7 @@ import {
 const EXPECTED = Object.freeze([
   ["Q1_ROOT_TRIVIAL", "root_inline", "ROOT_TRIVIAL"],
   ["Q2_ISOLATED_LUNA", "isolated_role_root", "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH"],
-  ["Q3_ISOLATED_TERRA", "isolated_role_root", "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH"],
+  ["Q3_ISOLATED_TERRA_NO_NATIVE_SCHEMA", "isolated_role_root", "DELEGATE_ISOLATED_SCHEMA_UNAVAILABLE"],
   ["Q4_TYPED_WORKER", "typed_child", "DELEGATE_TYPED_PERMISSION_MATCH"],
   ["Q5_ROOT_HIGH_RISK", "root_inline", "ROOT_HIGH_RISK"],
   ["Q6_UNKNOWN_SKILL", "root_inline", "ROOT_UNKNOWN_SKILL"],
@@ -127,7 +127,7 @@ test("scenario packets obtain their expected decision from the planner and rejec
   const decision = planAcceptanceScenario({
     scenario,
     policy: { mode: "active", allowTypedBridge: false },
-    capabilities: { agentTypeVisible: true, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
+    capabilities: { agentTypeVisible: true, isolatedRunnerVerified: true, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
     roleSpecs: ROLE_SPECS,
   });
   assert.equal(createAcceptancePacket(scenario).responsibility, "mechanical");
@@ -136,7 +136,7 @@ test("scenario packets obtain their expected decision from the planner and rejec
   assert.throws(() => planAcceptanceScenario({
     scenario,
     policy: { mode: "active", allowTypedBridge: false },
-    capabilities: { agentTypeVisible: false, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
+    capabilities: { agentTypeVisible: false, isolatedRunnerVerified: false, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
     roleSpecs: ROLE_SPECS,
   }), /acceptance scenario decision drift/);
 });
@@ -146,7 +146,7 @@ test("every non-negative acceptance scenario obtains its declared planner decisi
     const decision = planAcceptanceScenario({
       scenario,
       policy: { mode: "active", allowTypedBridge: false },
-      capabilities: { agentTypeVisible: true, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
+      capabilities: { agentTypeVisible: true, isolatedRunnerVerified: true, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
       roleSpecs: ROLE_SPECS,
     });
     assert.equal(decision.selectedShape, scenario.selectedShape, scenario.id);
@@ -158,9 +158,9 @@ test("isolated acceptance deliverables require exact structured results", () => 
   assert.equal(validateAcceptanceDeliverable("Q2_ISOLATED_LUNA", '{"count":25}'), true);
   assert.equal(validateAcceptanceDeliverable("Q2_ISOLATED_LUNA", '{"count":"25"}'), false);
   assert.equal(validateAcceptanceDeliverable("Q2_ISOLATED_LUNA", '{"count":25,"claim":true}'), false);
-  assert.equal(validateAcceptanceDeliverable("Q3_ISOLATED_TERRA", '{"filenames":["trace-0.txt","trace-1.txt","trace-2.txt","trace-3.txt","trace-4.txt"]}'), true);
-  assert.equal(validateAcceptanceDeliverable("Q3_ISOLATED_TERRA", '{"filenames":["trace-4.txt","trace-3.txt","trace-2.txt","trace-1.txt","trace-0.txt"]}'), false);
-  assert.equal(validateAcceptanceDeliverable("Q3_ISOLATED_TERRA", "```json\n{}\n```"), false);
+  assert.equal(validateAcceptanceDeliverable("Q3_ISOLATED_TERRA_NO_NATIVE_SCHEMA", '{"filenames":["trace-0.txt","trace-1.txt","trace-2.txt","trace-3.txt","trace-4.txt"]}'), true);
+  assert.equal(validateAcceptanceDeliverable("Q3_ISOLATED_TERRA_NO_NATIVE_SCHEMA", '{"filenames":["trace-4.txt","trace-3.txt","trace-2.txt","trace-1.txt","trace-0.txt"]}'), false);
+  assert.equal(validateAcceptanceDeliverable("Q3_ISOLATED_TERRA_NO_NATIVE_SCHEMA", "```json\n{}\n```"), false);
 });
 
 test("parallel acceptance requires exact typed fields and a distinct non-empty task message", () => {
@@ -188,7 +188,7 @@ test("production isolated executor accepts only its exact scenario deliverable",
     const decision = planAcceptanceScenario({
       scenario,
       policy: { mode: "active", allowTypedBridge: false },
-      capabilities: { agentTypeVisible: true, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
+      capabilities: { agentTypeVisible: true, isolatedRunnerVerified: true, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
       roleSpecs: ROLE_SPECS,
     });
     const executeIsolatedRole = async ({ roleSpec, roleSource, cwd, taskHash, onDeliverable }) => {
@@ -208,7 +208,7 @@ test("production isolated executor accepts only its exact scenario deliverable",
         taskHash,
         executionShape: "isolated_role_root",
         role: roleSpec.name,
-        reasonCode: "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH",
+        reasonCode: decision.reasonCode,
         expected: { model: roleSpec.model, effort: roleSpec.effort, sandbox: roleSpec.sandbox, depth: 0, roleHash: sha256(roleSource) },
         actual: { model: roleSpec.model, effort: roleSpec.effort, sandbox: roleSpec.sandbox, depth: 0, parentTokens: 7, childTokens: null, nativeAgentRole: null },
         checks,

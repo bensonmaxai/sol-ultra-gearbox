@@ -28,7 +28,8 @@ rejection.
 
 1. Build one self-contained packet only when actual delegation is intended.
 2. Load the managed policy; missing or invalid means `off`.
-3. Run `gearbox-dispatch plan` with the packet and current schema/permission facts.
+3. Run `gearbox-dispatch plan` with separate `agentTypeVisible`,
+   `isolatedRunnerVerified`, runtime-metadata, and permission facts.
 4. `root_inline`: Sol completes the task.
 5. `typed_child`: Sol calls `spawn_agent` with exact typed arguments, waits, closes the child, and validates runtime evidence.
 6. `isolated_role_root`: run `gearbox-dispatch run-isolated`; it is an isolated root, never a child.
@@ -37,14 +38,17 @@ rejection.
 9. Sol integrates, runs final relevant tests, records the privacy-safe outcome, and cleans the packet.
 
 The only shape names are `root_inline`, `typed_child`, `isolated_role_root`,
-and `typed_child_bridge`. Direct Luna/Terra isolated roots solve the
-read-only parent-permission mismatch; they do not claim native-child lineage.
-Writer permission mismatches remain `root_inline`.
+and `typed_child_bridge`. Verified Luna/Terra isolated roots solve read-only
+parent-permission mismatch and may also operate when the native child schema
+lacks `agent_type`; they do not claim native-child lineage. Writer permission
+mismatches and writers without native typed capability remain `root_inline`.
 
 ## Acceptance and recovery
 
-Unknown skills, generic roles, missing `agent_type`, unavailable capability
-flags, or missing/mismatched runtime evidence fail closed to `root_inline`.
+Unknown skills, generic roles, no verified native-or-isolated execution
+surface, or missing/mismatched runtime evidence fail closed to `root_inline`.
+Missing `agent_type` blocks native children but does not block a verified
+read-only `isolated_role_root`.
 One initial cheap-role attempt and one correction are allowed only for a
 concrete local output defect. Identity, effort, sandbox, scope, permission,
 cleanup, policy, ambiguity, hidden-coupling, or security failure receives no

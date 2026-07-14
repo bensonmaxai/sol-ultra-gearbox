@@ -1,6 +1,6 @@
 ---
 name: sol-ultra-gearbox
-description: Audit, verify, install, route, and roll back Codex Sol root modes plus typed Terra and Luna subagent configurations. Use when working with Sol Max or Ultra, multi-agent model routing, workflow-skill spawn compatibility, custom agent TOML files, spawn_agent schema visibility, role smoke tests, cost evidence, global Gearbox installation, or fail-closed rollback.
+description: Audit, verify, install, route, and roll back Codex Sol root modes plus typed Terra and Luna subagent configurations. Use when working with Sol Max or Ultra, multi-agent model routing, Superpowers executing-plans or subagent-driven-development compatibility, workflow-skill spawn compatibility, custom agent TOML files, spawn_agent schema visibility, role smoke tests, cost evidence, global Gearbox installation, or fail-closed rollback.
 ---
 
 # Sol Ultra Gearbox
@@ -76,7 +76,8 @@ stable responsibility.
 
 Inspect the `spawn_agent` schema exposed in the current task.
 
-- Require `agent_type` before using a named role.
+- Require `agent_type` before using a named child. A verified isolated role is
+  a separate root, not a child, and instead requires `isolatedRunnerVerified`.
 - Set `fork_turns="none"` explicitly.
 - Omit `model`, `reasoning_effort`, and `service_tier`; role TOML owns them.
 - Refuse untyped children that would inherit the parent model.
@@ -102,7 +103,9 @@ For supported actual delegation, use this exact root workflow:
 
 1. Build one self-contained packet only when actual delegation is intended.
 2. Load the managed policy; missing or invalid means `off`.
-3. Run `gearbox-dispatch plan` with the packet and current schema and parent-permission facts.
+3. Run `gearbox-dispatch plan` with the packet and separate
+   `agentTypeVisible`, `isolatedRunnerVerified`, runtime-metadata, and
+   parent-permission facts.
 4. `root_inline`: Sol completes the task.
 5. `typed_child`: Sol calls `spawn_agent` with exact typed args, waits, closes the child, and validates runtime evidence.
 6. `isolated_role_root`: run `gearbox-dispatch run-isolated`; this is an isolated root, never a child.
@@ -111,14 +114,15 @@ For supported actual delegation, use this exact root workflow:
 9. Sol integrates, runs final relevant tests, records the privacy-safe outcome, and cleans the packet.
 
 The execution shapes are `root_inline`, `typed_child`, `isolated_role_root`,
-and `typed_child_bridge`. Direct Luna/Terra read-only work whose parent
-permission does not match runs only as `isolated_role_root`, never as a native
-child. A write mismatch remains `root_inline`. `typed_child_bridge` needs a
-separate verified capability and is disabled for first activation with
-`allowTypedBridge=false`.
+and `typed_child_bridge`. Verified Luna/Terra read-only work whose parent
+permission does not match or whose task lacks the native `agent_type` surface
+may run as `isolated_role_root`. It does not require `agent_type` because it is
+never a child. A write mismatch remains `root_inline`. `typed_child_bridge`
+needs a separate verified capability and is disabled for first activation
+with `allowTypedBridge=false`.
 
-Unknown skills, unavailable typed capability flags, generic roles, or missing
-trusted runtime evidence fail closed to `root_inline`. Give a cheap role one
+Unknown skills, no verified native-or-isolated execution surface, generic
+roles, or missing trusted runtime evidence fail closed to `root_inline`. Give a cheap role one
 initial attempt and at most one correction for a concrete local output defect;
 never retry identity, permission, scope, cleanup, policy, ambiguity, or hidden
 coupling failures. Active mode requires trusted current ten-question acceptance
@@ -137,9 +141,13 @@ evidence; do not require byte-identical persisted prompt text.
 ## Adapt skill-driven delegation
 
 Keep workflow skills active on the Sol root. They may own planning, task order,
-review loops, artifact handoffs, and acceptance criteria. Immediately before an
-actual child spawn, apply the compatibility gate:
+review loops, artifact handoffs, and acceptance criteria. Apply the compatibility
+gate before `executing-plans` rules out delegation and immediately before an
+actual child spawn or managed isolated dispatch:
 
+- before choosing `superpowers:executing-plans`, inspect the written plan for
+  bounded phases that would otherwise use subagent-driven development and run
+  the workflow-selection adapter before declaring delegation unavailable;
 - do not select Sol Ultra merely because a workflow uses subagents; a known
   sequential adapter may dispatch one typed child at a time from the lightest
   sufficient Sol root;
@@ -156,7 +164,7 @@ actual child spawn, apply the compatibility gate:
 - fail closed for an unknown skill or an unresolvable conflict instead of
   guessing a role or silently changing required concurrency.
 
-Use the compatibility matrix for the explicit
+Use the compatibility matrix for the explicit `executing-plans`,
 `subagent-driven-development`, `dispatching-parallel-agents`,
 `requesting-code-review`, `security-scan`, and `security-diff-scan` adapters.
 The presence of words such as subagent, multi-agent, or spawn in documentation
@@ -237,6 +245,7 @@ Separate verified facts, inference, and remaining risk. Include:
 
 - operation and result;
 - role, actual model, effort, fork, read/write scope, retry, and escalation;
+- `fork N/A` when no child was created;
 - tests and report path;
 - whether global state changed;
 - rollback path when applicable;

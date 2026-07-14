@@ -14,6 +14,7 @@ import {
   validatePostInstallRootRuntime,
 } from "../lib/gearbox.mjs";
 import { planDispatch } from "../lib/dispatch-planner.mjs";
+import { validateDispatchResult } from "../lib/dispatch-evidence.mjs";
 import { DISPATCH_POLICY_RELATIVE_PATH, loadDispatchPolicy } from "../lib/dispatch-policy.mjs";
 import { runIsolatedRole } from "../lib/dispatch-runner.mjs";
 
@@ -118,6 +119,7 @@ async function readOwnedPacket(path, { consume }) {
 function parsePacketArguments(args) {
   const capabilityFlags = new Map([
     ["--agent-type-visible", "agentTypeVisible"],
+    ["--isolated-runner-verified", "isolatedRunnerVerified"],
     ["--runtime-metadata-available", "runtimeMetadataAvailable"],
     ["--permissions-enforced", "permissionsEnforced"],
   ]);
@@ -395,6 +397,7 @@ async function main() {
     packet,
     capabilities: {
       agentTypeVisible: capabilityInput.agentTypeVisible === true,
+      isolatedRunnerVerified: capabilityInput.isolatedRunnerVerified === true,
       runtimeMetadataAvailable: capabilityInput.runtimeMetadataAvailable === true,
       bridgeRuntimeVerified: false,
       permissionBypassActive: capabilityInput.permissionsEnforced !== true,
@@ -428,6 +431,7 @@ async function main() {
       cwd: scopedWorkspace,
       task,
       taskHash: decision.taskHash,
+      reasonCode: decision.reasonCode,
       onDeliverable: async (value) => {
         deliverable = value;
         return true;
@@ -446,7 +450,8 @@ async function main() {
     result.pass = false;
     result.rollbackRequired = true;
   }
-  if (result.pass !== true) {
+  const resultValidation = validateDispatchResult({ result, decision, roleSpec });
+  if (result.pass !== true || !resultValidation.pass) {
     output({ status: "GEARBOX_DISPATCH_REJECTED", mode: loaded.state, decision, result });
     process.exitCode = 1;
     return;
