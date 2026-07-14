@@ -1,6 +1,6 @@
 ---
 name: sol-ultra-gearbox
-description: Audit, verify, install, route, and roll back Codex Sol root modes plus typed Terra and Luna subagent configurations. Use when working with Sol Max or Ultra, multi-agent model routing, Superpowers executing-plans or subagent-driven-development compatibility, workflow-skill spawn compatibility, custom agent TOML files, spawn_agent schema visibility, role smoke tests, cost evidence, global Gearbox installation, or fail-closed rollback.
+description: Audit, verify, install, route, and roll back Codex Sol root modes plus typed Terra and Luna subagent configurations. Use when working with Sol Max or Ultra, multi-agent model routing, Superpowers executing-plans, subagent-driven-development, or writing-skills compatibility, workflow-skill spawn compatibility, custom agent TOML files, spawn_agent schema visibility, role smoke tests, cost evidence, global Gearbox installation, or fail-closed rollback.
 ---
 
 # Sol Ultra Gearbox
@@ -67,6 +67,10 @@ Treat Sol root modes and typed child roles as different controls.
   owner requests that exact role or an existing workflow depends on its Max
   effort profile. Never select it automatically or treat it as the normal
   upgrade from `terra_worker`.
+- Use `sol_skill_tester` only as an owner-approved, isolated Sol High root for
+  fresh-context `superpowers:writing-skills` RED/GREEN pressure tests. It is not
+  a typed child, is not exposed in `[agents.*]`, and must never be selected by
+  generic routing.
 
 Use the routing matrix for the complete Low through Ultra mapping. Do not create
 one custom role for every supported effort; keep only profiles with a distinct,
@@ -120,6 +124,9 @@ may run as `isolated_role_root`. It does not require `agent_type` because it is
 never a child. A write mismatch remains `root_inline`. `typed_child_bridge`
 needs a separate verified capability and is disabled for first activation
 with `allowTypedBridge=false`.
+The owner-approved `superpowers:writing-skills` adapter also uses
+`isolated_role_root`, but only with `sol_skill_tester` and its dedicated reason;
+it never uses the native child surface.
 
 Unknown skills, no verified native-or-isolated execution surface, generic
 roles, or missing trusted runtime evidence fail closed to `root_inline`. Give a cheap role one
@@ -166,7 +173,8 @@ actual child spawn or managed isolated dispatch:
 
 Use the compatibility matrix for the explicit `executing-plans`,
 `subagent-driven-development`, `dispatching-parallel-agents`,
-`requesting-code-review`, `security-scan`, and `security-diff-scan` adapters.
+`requesting-code-review`, `writing-skills`, `security-scan`, and
+`security-diff-scan` adapters.
 The presence of words such as subagent, multi-agent, or spawn in documentation
 does not trigger the gate; an actual delegation intent does.
 
@@ -191,6 +199,14 @@ Use `npm run smoke:sdd` for the disposable SDD adapter contract. It runs the
 write worker and read-only reviewer as sequential permission-matched phases,
 verifies the artifact handoff, and does not claim to exercise a Codex core
 hook.
+
+Use `npm run smoke:writing-skills` for the owner-approved pressure-test
+contract. It runs five RED controls without the target skill and five GREEN
+treatments with it, sequentially in fresh isolated Sol High roots. Both phases
+use the same task, model, and effort; the expected verdict is absent from the
+task, and Sol root compares only privacy-safe structured outcomes. The full
+`npm run smoke` includes this contract and trusted smoke reuse rejects reports
+that omit or mismatch it.
 
 Mark missing runtime metadata as `unverified`; never infer cost savings from a
 role name or prose response.

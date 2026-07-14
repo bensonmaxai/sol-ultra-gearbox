@@ -42,6 +42,9 @@ and `typed_child_bridge`. Verified Luna/Terra isolated roots solve read-only
 parent-permission mismatch and may also operate when the native child schema
 lacks `agent_type`; they do not claim native-child lineage. Writer permission
 mismatches and writers without native typed capability remain `root_inline`.
+The exact owner-approved `superpowers:writing-skills` adapter may instead run
+the isolated-only `sol_skill_tester` with its dedicated reason for sequential
+fresh-context RED/GREEN pressure testing. No other adapter may request it.
 
 ## Acceptance and recovery
 

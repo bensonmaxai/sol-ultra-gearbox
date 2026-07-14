@@ -35,6 +35,7 @@ import {
   validateRoleSmokeEvidence,
   validateRuntimeBinding,
   validateSddAdapterEvidence,
+  validateWritingSkillsAdapterEvidence,
 } from "../lib/runtime-evidence.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
@@ -177,6 +178,7 @@ function runtimeEvidenceCompatible(
 function validateActiveTransition({
   manifest,
   manifestPath,
+  smokeReport,
   acceptanceReport,
   currentBinding,
   activeStatusResult,
@@ -222,6 +224,14 @@ function validateActiveTransition({
       SHA256.test(manifest?.activation?.acceptanceBindingSha256 ?? "") &&
       manifest.activation.acceptanceBindingSha256 ===
         acceptanceReport?.runtimeBinding?.sha256,
+    writingSkillsBinding:
+      validateWritingSkillsAdapterEvidence(smokeReport?.writingSkillsAdapter)
+        .pass &&
+      SHA256.test(
+        manifest?.activation?.writingSkillsEvidenceSha256 ?? "",
+      ) &&
+      manifest.activation.writingSkillsEvidenceSha256 ===
+        smokeReport.writingSkillsAdapter.evidenceSha256,
     staticChecks:
       staticChecks !== null &&
       typeof staticChecks === "object" &&
@@ -274,8 +284,12 @@ function summarizeRoleSmoke(report, currentBinding, commitIsAncestor, transition
     ROLE_SPECS.filter((role) => role.smoke),
     EXPECTED_ROOT,
   );
+  const writingSkillsEvidence = validateWritingSkillsAdapterEvidence(
+    report?.writingSkillsAdapter,
+  );
   const pass =
     roleEvidence.pass &&
+    writingSkillsEvidence.pass &&
     bindingValid &&
     report.runtimeBinding.git.clean === true &&
     runtimeEvidenceCompatible(report, currentBinding, commitIsAncestor, transition) &&
@@ -291,6 +305,17 @@ function summarizeRoleSmoke(report, currentBinding, commitIsAncestor, transition
     commit: report.runtimeBinding.git.head,
     validatedAtCommit: currentBinding.git.head,
     runtimeBindingSha256: report.runtimeBinding.sha256,
+    writingSkillsAdapter: {
+      pass: true,
+      role: report.writingSkillsAdapter.role,
+      redRuns: report.writingSkillsAdapter.trials.filter(
+        (trial) => trial.phase === "red",
+      ).length,
+      greenRuns: report.writingSkillsAdapter.trials.filter(
+        (trial) => trial.phase === "green",
+      ).length,
+      evidenceSha256: report.writingSkillsAdapter.evidenceSha256,
+    },
     roles: roles.map((role) => ({
       role: role.role,
       model: role.actual.model,
@@ -451,6 +476,7 @@ async function main() {
   const transition = validateActiveTransition({
     manifest: activationManifest,
     manifestPath: activationManifestPath,
+    smokeReport,
     acceptanceReport,
     currentBinding,
     activeStatusResult,

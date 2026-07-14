@@ -19,7 +19,7 @@ const prompt = args.at(-1) ?? "";
 const marker = /append ([^\\s]+) on a separate final line/.exec(prompt)?.[1] ?? "MISSING_MARKER";
 const mode = process.env.FAKE_CODEX_MODE ?? "success";
 const auth = await lstat(join(process.env.CODEX_HOME, "auth.json"));
-if (!auth.isSymbolicLink() || !/sol-ultra-gearbox-v2-dispatch-home-(luna_clerk|terra_explorer)-/.test(process.env.CODEX_HOME)) process.exit(72);
+if (!auth.isSymbolicLink() || !/sol-ultra-gearbox-v2-dispatch-home-(luna_clerk|terra_explorer|sol_skill_tester)-/.test(process.env.CODEX_HOME)) process.exit(72);
 
 if (mode === "timeout") {
   process.on("SIGTERM", () => {});

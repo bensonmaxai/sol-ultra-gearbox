@@ -189,7 +189,18 @@ async function activeManifestEvidence(policy) {
       : null;
     if (!repositoryRoot || !reportsRoot || reportsRoot !== join(repositoryRoot, "reports") || actual !== expectedActual ||
       fromReports === null || fromReports === "" || fromReports === ".." || fromReports.startsWith(`..${sep}`)) return null;
-    if (manifest.status !== "applied" || manifest.activation?.installId !== activation.installId || manifest.activation?.manifestPath !== manifestPath || manifest.activation?.policySha256 !== policy.sha256 || !/^[a-f0-9]{64}$/.test(manifest.activation?.acceptanceBindingSha256 ?? "")) return null;
+    if (
+      manifest.status !== "applied" ||
+      manifest.activation?.installId !== activation.installId ||
+      manifest.activation?.manifestPath !== manifestPath ||
+      manifest.activation?.policySha256 !== policy.sha256 ||
+      !/^[a-f0-9]{64}$/.test(
+        manifest.activation?.acceptanceBindingSha256 ?? "",
+      ) ||
+      !/^[a-f0-9]{64}$/.test(
+        manifest.activation?.writingSkillsEvidenceSha256 ?? "",
+      )
+    ) return null;
     if (manifest.staticChecks === null || typeof manifest.staticChecks !== "object" ||
       !["strictConfig", "configLoad", "mcpConfig", "installation"].every((key) => manifest.staticChecks[key] === true)) return null;
     if (manifest.postInstallRootSmoke?.pass !== true ||

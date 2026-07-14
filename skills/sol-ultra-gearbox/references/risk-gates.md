@@ -18,6 +18,7 @@ Use these gates in order. Stop at the first failure.
 | Filesystem | Exact expected file diff | Unexpected write | Stop and preserve evidence |
 | Global immutability | Same config contents before and after one isolated smoke | Same-run global config changed | Fail and inspect owned entries |
 | Reusable smoke | Clean commit, matching config/Codex/role/runtime hashes, fixed TTL | Dirty tree, stale report, path escape, symlink, or any hash drift | Run a fresh approved smoke or stop |
+| Writing-skills pressure test | Owner approval, isolated `sol_skill_tester`, at least five RED plus five GREEN fresh contexts, identical task/model/effort, target skill only in GREEN | Missing control, verdict leakage, parallel reuse, role/runtime mismatch, write, spawn, or cleanup failure | Stop on the first failure; do not publish or apply Active evidence |
 | Cost | Persisted parent and child token usage | Tokens inferred from prose or role | Do not claim savings |
 | Global apply | Explicit owner approval, all live roles pass, and persisted fresh CLI root is Sol Max or Ultra | Any earlier gate failed | Do not modify `~/.codex` |
 | Skill install | Managed target and unchanged installed hashes | Unmanaged or locally edited target | Refuse overwrite |

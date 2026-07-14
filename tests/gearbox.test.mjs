@@ -8,11 +8,13 @@ import {
   ACTIVE_ROOT_EFFORTS,
   AGENTS_MARKER,
   CONFIG_LEGACY_THREADS_MARKER,
+  CONFIG_ROLE_SPECS,
   CONFIG_ROLES_MARKER,
   CONFIG_V2_MARKER,
   MAX_DIRECT_CHILDREN,
   MULTI_AGENT_SESSION_THREADS,
   ROLE_SPECS,
+  TYPED_ROLE_NAMES,
   WORKFLOW_POLICY,
   atomicWrite,
   captureConfigRollbackState,
@@ -83,6 +85,7 @@ test("renderConfig adds only marker-delimited role and v2 blocks", () => {
   assert.match(output, new RegExp(CONFIG_V2_MARKER));
   assert.match(output, /^\[agents\.luna_clerk\]$/m);
   assert.match(output, /^\[agents\.terra_worker\]$/m);
+  assert.doesNotMatch(output, /^\[agents\.sol_skill_tester\]$/m);
   assert.match(output, /^\[features\.multi_agent_v2\]$/m);
   assert.equal(MAX_DIRECT_CHILDREN, 2);
   assert.equal(MULTI_AGENT_SESSION_THREADS, MAX_DIRECT_CHILDREN + 1);
@@ -278,6 +281,12 @@ test("managed policy gates skill-driven delegation and unknown skills", () => {
   assert.match(WORKFLOW_POLICY, /requesting-code-review/);
   assert.match(WORKFLOW_POLICY, /security-scan/);
   assert.match(WORKFLOW_POLICY, /security-diff-scan/);
+  assert.match(WORKFLOW_POLICY, /superpowers:writing-skills/);
+  assert.match(WORKFLOW_POLICY, /sol_skill_tester/);
+  assert.match(WORKFLOW_POLICY, /at least five|至少五/i);
+  assert.match(WORKFLOW_POLICY, /fresh isolated|全新隔離/i);
+  assert.match(WORKFLOW_POLICY, /expected verdict|預期判定/i);
+  assert.match(WORKFLOW_POLICY, /owner approval|owner.*批准/i);
   assert.match(WORKFLOW_POLICY, /sites:sites-building/);
   assert.match(WORKFLOW_POLICY, /hatch-pet/);
   assert.match(WORKFLOW_POLICY, /heygen:heygen-video/);
@@ -344,6 +353,33 @@ test("all six published roles participate in live smoke", () => {
   );
 });
 
+test("skill pressure tester is installed but never exposed as a typed child", () => {
+  const tester = ROLE_SPECS.find((role) => role.name === "sol_skill_tester");
+  assert.deepEqual(
+    {
+      model: tester?.model,
+      effort: tester?.effort,
+      sandbox: tester?.sandbox,
+      smoke: tester?.smoke,
+      isolatedOnly: tester?.isolatedOnly,
+    },
+    {
+      model: "gpt-5.6-sol",
+      effort: "high",
+      sandbox: "read-only",
+      smoke: false,
+      isolatedOnly: true,
+    },
+  );
+  assert.equal(TYPED_ROLE_NAMES.includes("sol_skill_tester"), false);
+  assert.equal(CONFIG_ROLE_SPECS.some((role) => role.name === "sol_skill_tester"), false);
+  assert.equal(validateTypedSpawnArgs({
+    agent_type: "sol_skill_tester",
+    fork_turns: "none",
+    message: "pressure test",
+  }).pass, false);
+});
+
 test("managed dispatch runtime is bound into the installer and packaged with the exact wrapper", async () => {
   const installer = await readFile(join(REPO_ROOT, "scripts", "gearbox.mjs"), "utf8");
   const wrapper = await readFile(join(REPO_ROOT, "scripts", "gearbox-dispatch"), "utf8");
@@ -351,6 +387,8 @@ test("managed dispatch runtime is bound into the installer and packaged with the
   assert.match(installer, /DISPATCH_RUNTIME_FILES/);
   assert.match(installer, /scripts\/gearbox-dispatch/);
   assert.match(installer, /dispatchMode/);
+  assert.match(installer, /randomBytes/);
+  assert.doesNotMatch(installer, /GEARBOX_SKILL_GUIDANCE_7F3C9A/);
   assert.equal(wrapperMode, 0o755);
   assert.equal(
     wrapper,

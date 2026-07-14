@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   chmod,
@@ -23,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import {
   AGENTS_MARKER,
   CONFIG_LEGACY_THREADS_MARKER,
+  CONFIG_ROLE_SPECS,
   CONFIG_ROLES_MARKER,
   CONFIG_V2_MARKER,
   DISPATCH_RUNTIME_FILES,
@@ -71,15 +73,19 @@ import {
 } from "../lib/dispatch-policy.mjs";
 import {
   createRuntimeBinding,
+  createWritingSkillsEvidenceBinding,
   validateSddAdapterEvidence,
   validateTrustedAcceptance,
   validateTrustedSmoke,
+  validateWritingSkillsAdapterEvidence,
 } from "../lib/runtime-evidence.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(SCRIPT_PATH), "..");
 const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), ".codex");
 const SMOKE_ROOT = Object.freeze({ model: "gpt-5.6-sol", effort: "max" });
+const WRITING_SKILLS_REPETITIONS = 5;
+const WRITING_SKILLS_REASON = "DELEGATE_ISOLATED_SKILL_PRESSURE_TEST";
 const APP_CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex";
 const CODEX_BIN =
   process.env.CODEX_BIN ?? (existsSync(APP_CODEX_BIN) ? APP_CODEX_BIN : "codex");
@@ -682,7 +688,7 @@ async function runDoctor() {
     "-c",
     'features.multi_agent_v2.tool_namespace="agents"',
   ];
-  for (const spec of ROLE_SPECS) {
+  for (const spec of CONFIG_ROLE_SPECS) {
     strictArgs.push(
       "-c",
       `agents.${spec.name}.description=${JSON.stringify(spec.description)}`,
@@ -1213,6 +1219,297 @@ async function runSddAdapterProbe({ writeReport = true } = {}) {
   return report;
 }
 
+const WRITING_SKILLS_SCENARIO = `# Pressure scenario
+
+A public workflow skill is being evaluated before release. Decide the single
+release-gate action that should be returned for this fixture. Base the answer
+only on files available in this isolated workspace.
+`;
+
+function writingSkillsTarget(expectedDecision) {
+  return `---
+name: gearbox-pressure-fixture
+description: Deterministic private fixture for validating skill-guidance uptake.
+---
+
+# Required fixture behavior
+
+For scenario.md, return decision \`${expectedDecision}\` and
+set guidance_used to \`target-skill\`. This instruction applies only when this
+SKILL.md file is actually present in the isolated workspace.
+`;
+}
+
+const WRITING_SKILLS_TASK = [
+  "Read scenario.md in the isolated workspace.",
+  "If SKILL.md exists, read and follow it; otherwise decide from scenario.md alone.",
+  "Return exactly one JSON object with exactly two string keys, decision and guidance_used, with no markdown or extra text.",
+  "Do not edit files, spawn, delegate, access the network or external systems, or infer whether this is a control or treatment run.",
+].join(" ");
+
+function validateSkillTesterDeliverable(
+  value,
+  targetSkillPresent,
+  expectedDecision,
+) {
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return {
+      valid: false,
+      expectedDecisionMatched: false,
+      decisionSha256: null,
+    };
+  }
+  const exactShape =
+    parsed &&
+    typeof parsed === "object" &&
+    !Array.isArray(parsed) &&
+    JSON.stringify(Object.keys(parsed).sort()) ===
+      JSON.stringify(["decision", "guidance_used"]) &&
+    typeof parsed.decision === "string" &&
+    parsed.decision.trim().length > 0 &&
+    typeof parsed.guidance_used === "string" &&
+    parsed.guidance_used.trim().length > 0;
+  const expectedDecisionMatched =
+    exactShape &&
+    parsed.decision === expectedDecision &&
+    parsed.guidance_used === "target-skill";
+  return {
+    valid:
+      exactShape &&
+      (targetSkillPresent
+        ? expectedDecisionMatched
+        : !expectedDecisionMatched && parsed.guidance_used !== "target-skill"),
+    expectedDecisionMatched,
+    decisionSha256: exactShape ? sha256(parsed.decision) : null,
+  };
+}
+
+function writingSkillsMarkdown(report) {
+  const red = report.trials.filter((trial) => trial.phase === "red");
+  const green = report.trials.filter((trial) => trial.phase === "green");
+  const tokens = (trials) =>
+    trials.reduce((sum, trial) => sum + (trial.result?.actual?.parentTokens ?? 0), 0);
+  return `# Writing Skills Adapter Pressure Test
+
+- Generated: ${report.generatedAt}
+- Status: ${report.pass ? "PASS" : "FAIL"}
+- Role: ${report.role.name} / ${report.role.model} / ${report.role.effort}
+- RED controls: ${red.length}/${report.expectedRepetitionsPerPhase} (${tokens(red)} tokens)
+- GREEN treatments: ${green.length}/${report.expectedRepetitionsPerPhase} (${tokens(green)} tokens)
+- Execution: sequential fresh isolated roots
+- Global config unchanged: ${report.globalConfigUnchanged ? "yes" : "no"}
+- Codex core hook tested: no
+`;
+}
+
+async function runWritingSkillsAdapterProbe({ writeReport = true } = {}) {
+  const runtimeBinding = await collectRuntimeBinding();
+  if (!runtimeBinding.git.clean) {
+    throw new Error(
+      "Paid writing-skills adapter probe requires a clean Git tree so its evidence is immutable",
+    );
+  }
+  const expectedDecision = `GEARBOX_SKILL_GUIDANCE_${randomBytes(16).toString("hex")}`;
+  const targetSkill = writingSkillsTarget(expectedDecision);
+  if (
+    WRITING_SKILLS_TASK.includes(expectedDecision) ||
+    WRITING_SKILLS_SCENARIO.includes(expectedDecision)
+  ) {
+    throw new Error("Writing-skills task contract leaks the expected decision");
+  }
+  const tester = ROLE_SPECS.find((spec) => spec.name === "sol_skill_tester");
+  if (!tester?.isolatedOnly || tester.smoke !== false) {
+    throw new Error("Writing-skills pressure tester role is not isolated-only");
+  }
+  const roleSource = await readFile(rolePath(tester), "utf8");
+  const globalConfigPath = join(CODEX_HOME, "config.toml");
+  const globalConfigBefore = await readOptional(globalConfigPath);
+  const taskHash = sha256(WRITING_SKILLS_TASK);
+  const trials = [];
+  let fixtureCleanupPassed = true;
+  let stop = false;
+
+  for (const phase of ["red", "green"]) {
+    for (let repetition = 1; repetition <= WRITING_SKILLS_REPETITIONS; repetition += 1) {
+      if (stop) break;
+      process.stdout.write(`WRITING_SKILLS_START ${phase} ${repetition}\n`);
+      const targetSkillPresent = phase === "green";
+      const fixture = await mkdtemp(
+        join(tmpdir(), `sol-ultra-gearbox-v2-writing-skills-${phase}-`),
+      );
+      let deliverable = null;
+      let deliverableValidation = {
+        valid: false,
+        expectedDecisionMatched: false,
+        decisionSha256: null,
+      };
+      const startedAt = new Date().toISOString();
+      let result;
+      let fixtureCleaned = false;
+      try {
+        await writeFile(join(fixture, "scenario.md"), WRITING_SKILLS_SCENARIO, "utf8");
+        if (targetSkillPresent) {
+          await writeFile(join(fixture, "SKILL.md"), targetSkill, "utf8");
+        }
+        result = await runIsolatedRole({
+          codexBin: CODEX_BIN,
+          codexHome: CODEX_HOME,
+          roleSpec: tester,
+          roleSource,
+          cwd: fixture,
+          task: WRITING_SKILLS_TASK,
+          taskHash,
+          reasonCode: WRITING_SKILLS_REASON,
+          timeoutMs: 900_000,
+          onDeliverable: async (value) => {
+            deliverable = value;
+            deliverableValidation = validateSkillTesterDeliverable(
+              value,
+              targetSkillPresent,
+              expectedDecision,
+            );
+            return deliverableValidation.valid;
+          },
+        });
+      } finally {
+        try {
+          const cleanup = await cleanupProbeArtifacts([fixture]);
+          fixtureCleaned = cleanup.removed.length === 1;
+        } catch {
+          fixtureCleaned = false;
+        }
+      }
+      fixtureCleanupPassed = fixtureCleanupPassed && fixtureCleaned;
+      const completedAt = new Date().toISOString();
+      const trial = {
+        phase,
+        repetition,
+        startedAt,
+        completedAt,
+        targetSkillPresent,
+        expectedDecisionInTask: false,
+        expectedDecisionMatched:
+          deliverableValidation.expectedDecisionMatched === true,
+        decisionSha256: deliverableValidation.decisionSha256,
+        deliverableSha256:
+          typeof deliverable === "string" ? sha256(deliverable) : null,
+        result,
+      };
+      trials.push(trial);
+      const passed = result?.pass === true && fixtureCleaned;
+      process.stdout.write(
+        `WRITING_SKILLS_${passed ? "PASS" : "FAIL"} ${phase} ${repetition}\n`,
+      );
+      if (!passed) stop = true;
+    }
+    if (stop) break;
+  }
+
+  const globalConfigAfter = await readOptional(globalConfigPath);
+  const runtimeBindingAfter = await collectRuntimeBinding();
+  const expectedOrder = ["red", "green"].flatMap((phase) =>
+    Array.from({ length: WRITING_SKILLS_REPETITIONS }, (_, index) => ({
+      phase,
+      repetition: index + 1,
+    })),
+  );
+  const sequential = trials.every((trial, index) =>
+    index === 0 ||
+    Date.parse(trials[index - 1].completedAt) <= Date.parse(trial.startedAt),
+  );
+  const sequenceChecks = {
+    exactRedThenGreenOrder:
+      trials.length === expectedOrder.length &&
+      trials.every(
+        (trial, index) =>
+          trial.phase === expectedOrder[index].phase &&
+          trial.repetition === expectedOrder[index].repetition,
+      ),
+    sequential,
+    sameTaskContract: trials.every((trial) => trial.result?.taskHash === taskHash),
+    sameModelAndEffort: trials.every(
+      (trial) =>
+        trial.result?.actual?.model === tester.model &&
+        trial.result?.actual?.effort === tester.effort,
+    ),
+    freshIsolatedContextPerTrial:
+      trials.length === expectedOrder.length &&
+      trials.every((trial) => trial.result?.checks?.cleanupPassed === true),
+    targetSkillOnlyInGreen: trials.every(
+      (trial) => trial.targetSkillPresent === (trial.phase === "green"),
+    ),
+    expectedDecisionNeverInTask: trials.every(
+      (trial) => trial.expectedDecisionInTask === false,
+    ),
+    redControlUnaided: trials
+      .filter((trial) => trial.phase === "red")
+      .every((trial) => trial.expectedDecisionMatched === false),
+    greenTreatmentCompliant: trials
+      .filter((trial) => trial.phase === "green")
+      .every((trial) => trial.expectedDecisionMatched === true),
+  };
+  const report = {
+    schemaVersion: 1,
+    kind: "writing_skills_adapter_contract",
+    generatedAt: new Date().toISOString(),
+    pass:
+      trials.length === expectedOrder.length &&
+      trials.every((trial) => trial.result?.pass === true) &&
+      Object.values(sequenceChecks).every(Boolean) &&
+      fixtureCleanupPassed &&
+      globalConfigAfter === globalConfigBefore &&
+      runtimeBinding.sha256 === runtimeBindingAfter.sha256,
+    expectedRepetitionsPerPhase: WRITING_SKILLS_REPETITIONS,
+    role: {
+      name: tester.name,
+      model: tester.model,
+      effort: tester.effort,
+      sandbox: tester.sandbox,
+    },
+    taskContractSha256: taskHash,
+    targetSkillSha256: sha256(targetSkill),
+    expectedDecisionSha256: sha256(expectedDecision),
+    runtimeBinding,
+    runtimeBindingAfterSha256: runtimeBindingAfter.sha256,
+    runtimeBindingStable: runtimeBinding.sha256 === runtimeBindingAfter.sha256,
+    globalConfigBeforeSha256:
+      globalConfigBefore === null ? null : sha256(globalConfigBefore),
+    globalConfigAfterSha256:
+      globalConfigAfter === null ? null : sha256(globalConfigAfter),
+    globalConfigUnchanged: globalConfigAfter === globalConfigBefore,
+    trials,
+    sequenceChecks,
+    cleanup: { pass: fixtureCleanupPassed },
+    boundary: {
+      workflow: "superpowers:writing-skills",
+      verification: "red_green_pressure_test",
+      codexCoreHookTested: false,
+      execution: "sequential_fresh_isolated_roots",
+      rootOwnsComparison: true,
+    },
+  };
+  report.evidenceSha256 = createWritingSkillsEvidenceBinding(report);
+  const validation = validateWritingSkillsAdapterEvidence(report);
+  if (!validation.pass) {
+    report.pass = false;
+    report.evidenceSha256 = createWritingSkillsEvidenceBinding(report);
+  }
+  if (writeReport) {
+    const directory = join(REPO_ROOT, "reports", `${timestamp()}-writing-skills`);
+    await mkdir(directory, { recursive: true });
+    await writeJson(join(directory, "writing-skills.json"), report);
+    await atomicWrite(
+      join(directory, "writing-skills.md"),
+      writingSkillsMarkdown(report),
+    );
+    report.reportDirectory = directory;
+  }
+  return report;
+}
+
 function smokeMarkdown(report) {
   const rows = report.roles
     .map((item) => {
@@ -1221,7 +1518,8 @@ function smokeMarkdown(report) {
       return `| ${item.role} | ${item.pass ? "PASS" : "FAIL"} | ${item.actual?.model ?? "n/a"} | ${item.actual?.effort ?? "n/a"} | ${item.actual?.sandbox ?? "n/a"} | ${parentTokens} | ${childTokens} |`;
     })
     .join("\n");
-  return `# Gearbox V2 Role Smoke\n\n- Generated: ${report.generatedAt}\n- Status: ${report.pass ? "PASS" : "FAIL"}\n- Root runtime: ${report.rootRuntime.model} / ${report.rootRuntime.effort} (${report.rootRuntime.verified ? "verified" : "unverified"})\n- Global config unchanged: ${report.globalConfigUnchanged ? "yes" : "no"}\n- Policy: no retries; stop on first failure\n\n| Role | Status | Actual model | Effort | Sandbox | Parent tokens | Child tokens |\n|---|---|---|---|---|---:|---:|\n${rows}\n`;
+  const writing = report.writingSkillsAdapter;
+  return `# Gearbox V2 Role Smoke\n\n- Generated: ${report.generatedAt}\n- Status: ${report.pass ? "PASS" : "FAIL"}\n- Root runtime: ${report.rootRuntime.model} / ${report.rootRuntime.effort} (${report.rootRuntime.verified ? "verified" : "unverified"})\n- Writing-skills RED/GREEN: ${writing?.pass ? "PASS" : "FAIL"} (${writing?.trials?.length ?? 0} isolated runs)\n- Global config unchanged: ${report.globalConfigUnchanged ? "yes" : "no"}\n- Policy: no retries; stop on first failure\n\n| Role | Status | Actual model | Effort | Sandbox | Parent tokens | Child tokens |\n|---|---|---|---|---|---:|---:|\n${rows}\n`;
 }
 
 async function runSmokeAll({ writeReport = true } = {}) {
@@ -1241,6 +1539,11 @@ async function runSmokeAll({ writeReport = true } = {}) {
     process.stdout.write(`SMOKE_${result.pass ? "PASS" : "FAIL"} ${spec.name}\n`);
     if (!result.pass) break;
   }
+  const writingSkillsAdapter =
+    roles.length === ROLE_SPECS.filter((role) => role.smoke).length &&
+    roles.every((item) => item.pass)
+      ? await runWritingSkillsAdapterProbe({ writeReport: false })
+      : null;
   const globalConfigAfter = await readOptional(globalConfigPath);
   const runtimeBindingAfter = await collectRuntimeBinding();
   const globalConfigUnchanged = globalConfigAfter === globalConfigBefore;
@@ -1255,6 +1558,7 @@ async function runSmokeAll({ writeReport = true } = {}) {
     pass:
       roles.length === ROLE_SPECS.filter((role) => role.smoke).length &&
       roles.every((item) => item.pass) &&
+      writingSkillsAdapter?.pass === true &&
       globalConfigUnchanged &&
       runtimeBindingStable,
     expectedRoleCount: ROLE_SPECS.filter((role) => role.smoke).length,
@@ -1278,6 +1582,7 @@ async function runSmokeAll({ writeReport = true } = {}) {
     runtimeBindingAfterSha256: runtimeBindingAfter.sha256,
     runtimeBindingStable,
     roles,
+    writingSkillsAdapter,
   };
   if (writeReport) {
     const directory = join(REPO_ROOT, "reports", `${timestamp()}-smoke`);
@@ -1307,7 +1612,9 @@ async function runAcceptanceAll({ roleSmoke = null } = {}) {
   const runtimeBinding = await collectRuntimeBinding();
   if (!runtimeBinding.git.clean) throw new Error("Acceptance requires a clean Git tree");
   const smoke = roleSmoke ?? await runSmokeAll();
-  if (!smoke.pass) throw new Error("Acceptance requires current six-role smoke evidence");
+  if (!smoke.pass) {
+    throw new Error("Acceptance requires current role and writing-skills smoke evidence");
+  }
   const report = await runAcceptanceExam({
     policy: { allowTypedBridge: false },
     roleSmoke: smoke,
@@ -1617,6 +1924,8 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
       repositoryRoot: REPO_ROOT,
       policySha256: policy.sha256,
       acceptanceBindingSha256: acceptance.runtimeBinding.sha256,
+      writingSkillsEvidenceSha256:
+        smoke.writingSkillsAdapter.evidenceSha256,
     } : null,
     config: {
       path: configPath,
@@ -1815,6 +2124,7 @@ function usage() {
   node scripts/gearbox.mjs smoke --all
   node scripts/gearbox.mjs acceptance --all
   node scripts/gearbox.mjs smoke-sdd
+  node scripts/gearbox.mjs smoke-writing-skills
   node scripts/gearbox.mjs apply --promote-v2 [--dry-run] [--dispatch-mode shadow|active] [--reuse-smoke <reports/.../smoke.json>] [--reuse-acceptance <reports/.../acceptance.json>]
   node scripts/gearbox.mjs cleanup-smoke-projects --manifest <path>
   node scripts/gearbox.mjs rollback --manifest <path> [--force]
@@ -1869,6 +2179,16 @@ async function main() {
     return;
   }
 
+  if (command === "smoke-writing-skills") {
+    const report = await runWritingSkillsAdapterProbe();
+    process.stdout.write(
+      `GEARBOX_WRITING_SKILLS_${report.pass ? "PASS" : "FAIL"}\n`,
+    );
+    process.stdout.write(`REPORT ${report.reportDirectory}\n`);
+    if (!report.pass) process.exitCode = 1;
+    return;
+  }
+
   if (command === "apply") {
     if (!args.includes("--promote-v2")) {
       throw new Error("apply requires --promote-v2");
@@ -1894,7 +2214,7 @@ async function main() {
       : await runSmokeAll();
     if (!smoke.pass) {
       throw new Error(
-        `${smoke.expectedRoleCount}-role smoke failed; global config was not changed. Report: ${smoke.reportDirectory}`,
+        `Role or writing-skills smoke failed; global config was not changed. Report: ${smoke.reportDirectory}`,
       );
     }
     const reuseAcceptancePath = optionValue(args, "--reuse-acceptance");

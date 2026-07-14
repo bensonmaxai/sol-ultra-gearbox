@@ -14,6 +14,7 @@ import {
 
 const luna = ROLE_SPECS.find((role) => role.name === "luna_clerk");
 const terra = ROLE_SPECS.find((role) => role.name === "terra_explorer");
+const tester = ROLE_SPECS.find((role) => role.name === "sol_skill_tester");
 const roleSource = `name = "luna_clerk"
 model = "gpt-5.6-luna"
 model_reasoning_effort = "low"
@@ -32,6 +33,10 @@ const terraSource = roleSource
   .replace("luna_clerk", "terra_explorer")
   .replace("gpt-5.6-luna", "gpt-5.6-terra")
   .replace('model_reasoning_effort = "low"', 'model_reasoning_effort = "medium"');
+const testerSource = roleSource
+  .replace("luna_clerk", "sol_skill_tester")
+  .replace("gpt-5.6-luna", "gpt-5.6-sol")
+  .replace('model_reasoning_effort = "low"', 'model_reasoning_effort = "high"');
 const receiveDeliverable = async (value) => value === '{"kind":"fake-deliverable","value":"verified"}';
 
 test("isolated-root arguments use the selected cheap read role without parent delegation", () => {
@@ -66,13 +71,55 @@ test("isolated runner rejects all non-cheap-read roles", async () => {
   const root = await mkdtemp(join(tmpdir(), "dispatch-runner-reject-"));
   try {
     await writeFile(join(root, "auth.json"), "fake-auth\n", "utf8");
-    for (const role of ROLE_SPECS.filter((candidate) => ![luna.name, terra.name].includes(candidate.name))) {
+    for (const role of ROLE_SPECS.filter((candidate) => ![luna.name, terra.name, tester.name].includes(candidate.name))) {
       await assert.rejects(
         runIsolatedRole({ codexHome: root, roleSpec: role, roleSource, cwd: root, task, taskHash: sha256(task) }),
         /unsupported isolated root role/,
       );
     }
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("isolated runner accepts the skill tester only for its exact workflow reason", async () => {
+  const root = await mkdtemp(join(tmpdir(), "dispatch-runner-skill-tester-"));
+  const cwd = await mkdtemp(join(tmpdir(), "dispatch-runner-skill-tester-work-"));
+  try {
+    const fake = await createFakeCodex(join(root, "fake-codex.mjs"));
+    await writeFile(join(root, "auth.json"), "fake-auth\n", "utf8");
+    await assert.rejects(
+      runIsolatedRole({
+        codexBin: fake,
+        codexHome: root,
+        roleSpec: tester,
+        roleSource: testerSource,
+        cwd,
+        task,
+        taskHash: sha256(task),
+        onDeliverable: receiveDeliverable,
+      }),
+      /unsupported isolated root role/,
+    );
+    const result = await runIsolatedRole({
+      codexBin: fake,
+      codexHome: root,
+      roleSpec: tester,
+      roleSource: testerSource,
+      cwd,
+      task,
+      taskHash: sha256(task),
+      reasonCode: "DELEGATE_ISOLATED_SKILL_PRESSURE_TEST",
+      timeoutMs: 2_000,
+      onDeliverable: receiveDeliverable,
+    });
+    assert.equal(result.pass, true);
+    assert.equal(result.role, "sol_skill_tester");
+    assert.equal(result.actual.model, "gpt-5.6-sol");
+    assert.equal(result.actual.effort, "high");
+    assert.equal(result.actual.depth, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
 });
 
 test("isolated runner accepts exact root evidence and removes temporary homes", async () => {

@@ -14,6 +14,7 @@
     "doctor": "node scripts/gearbox.mjs doctor",
     "smoke": "node scripts/gearbox.mjs smoke --all",
     "smoke:sdd": "node scripts/gearbox.mjs smoke-sdd",
+    "smoke:writing-skills": "node scripts/gearbox.mjs smoke-writing-skills",
     "apply": "node scripts/gearbox.mjs apply --promote-v2",
     "dispatch:status": "node scripts/gearbox-dispatch.mjs status",
     "acceptance": "node scripts/gearbox.mjs acceptance --all",
