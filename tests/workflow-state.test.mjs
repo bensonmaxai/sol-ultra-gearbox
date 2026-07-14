@@ -134,6 +134,68 @@ test("canary receipt gates deferred work and a failed canary atomically blocks t
   assert.equal(blocked.activeBatch, null);
 });
 
+test("a canary blocked after its receipt still atomically blocks unmaterialized deferred work", () => {
+  const { plan, state } = initializedWorkflow();
+  const canaryReceived = materialize(plan, startCanary(plan, state));
+  const blocked = apply(plan, canaryReceived, event("stage_blocked", {
+    stageId: "audit-core", reasonCode: "CANARY_RUNTIME_FAILED",
+  }));
+  assert.equal(blocked.stages["audit-core"].state, "blocked");
+  assert.equal(blocked.stages["audit-cli"].state, "blocked");
+  assert.equal(blocked.stages["audit-cli"].attempts.length, 0);
+  assert.equal(blocked.stages["audit-cli"].blockedReasonCode, "WORKFLOW_CANARY_FAILED");
+  assert.equal(blocked.delegationStopped, true);
+  assert.equal(blocked.activeBatch, null);
+});
+
+test("blocked open attempts can record provider cleanup without changing blocked recovery state", () => {
+  const { plan, state } = initializedWorkflow();
+  for (const workflowState of [
+    startCanary(plan, state),
+    materialize(plan, startCanary(plan, initializedWorkflow().state)),
+  ]) {
+    const blocked = apply(plan, workflowState, event("stage_blocked", {
+      stageId: "audit-core", reasonCode: "PROVIDER_INTERRUPTED",
+    }));
+    const closedProvider = apply(plan, blocked, event("provider_closed", {
+      stageId: "audit-core", disposition: "blocked", cleanupPassed: true,
+    }));
+    assert.equal(closedProvider.stages["audit-core"].state, "blocked");
+    assert.equal(closedProvider.stages["audit-core"].attempts[0].providerClosed, true);
+    assert.equal(closedProvider.stages["audit-core"].attempts[0].providerDisposition, "blocked");
+  }
+});
+
+test("isolated receipts must be completed before sanitization or replay", () => {
+  const { plan, state } = initializedWorkflow();
+  const started = startCanary(plan, state, { shape: "isolated_role_root" });
+  const running = event("materialized", {
+    stageId: "audit-core", batchId: "batch-1", dispatchResult: { result: "receipt" }, status: "running",
+  });
+  assert.throws(() => sanitizeWorkflowEventForLedger(running), TypeError);
+  assert.throws(() => apply(plan, started, running), TypeError);
+  const completed = event("materialized", {
+    stageId: "audit-core", batchId: "batch-1", dispatchResult: { result: "receipt" }, status: "completed",
+  });
+  const sanitized = sanitizeWorkflowEventForLedger(completed);
+  assert.throws(() => apply(plan, started, { ...sanitized, status: "running" }), TypeError);
+  const replayed = apply(plan, started, sanitized);
+  assert.equal(replayed.stages["audit-core"].state, "running");
+});
+
+test("blocked-to-ready resolved facts must be privacy-safe identifiers", () => {
+  const unsafe = event("stage_ready", { stageId: "audit-core", resolvedFact: "owner said: fix this" });
+  assert.equal(validateWorkflowEvent(unsafe).pass, false);
+  const { plan, state } = initializedWorkflow();
+  const blocked = apply(plan, state, event("stage_blocked", {
+    stageId: "audit-core", reasonCode: "WAITING_FOR_FACT",
+  }));
+  const ready = apply(plan, blocked, event("stage_ready", {
+    stageId: "audit-core", resolvedFact: "sol-resolved-fact-1",
+  }));
+  assert.equal(ready.stages["audit-core"].state, "ready");
+});
+
 test("delegated budgets preserve reserves, root inline is free, and one correction consumes recovery", () => {
   const { plan, state } = initializedWorkflow();
   const started = startCanary(plan, state);
@@ -154,7 +216,14 @@ test("delegated budgets preserve reserves, root inline is free, and one correcti
     stageId: "audit-core", batchId: "batch-1", executionShape: "typed_child", role: "terra_explorer", taskHash: HASH("d"), attemptClass: "recovery",
   }));
   assert.equal(recovery.budget.consumed.recovery, 1);
-  assert.throws(() => apply(plan, recovery, event("correction_authorized", {
+  let secondRejected = evidence(plan, recovery);
+  secondRejected = apply(plan, secondRejected, event("rejected", {
+    stageId: "audit-core", final: false, hardFailure: false, reasonCode: "EVIDENCE_INCOMPLETE",
+  }));
+  secondRejected = apply(plan, secondRejected, event("provider_closed", {
+    stageId: "audit-core", disposition: "rejected", cleanupPassed: true,
+  }));
+  assert.throws(() => apply(plan, secondRejected, event("correction_authorized", {
     stageId: "audit-core", scopeHash: hashWorkflowPlan(plan), executionShape: "typed_child",
   })), TypeError);
 });
@@ -162,8 +231,10 @@ test("delegated budgets preserve reserves, root inline is free, and one correcti
 test("hard final rejections, cancellation, and rejected dependencies never unlock work", () => {
   const { plan, planHash, state } = initializedWorkflow();
   let failed = evidence(plan, startCanary(plan, state));
-  failed = apply(plan, failed, event("rejected", { stageId: "audit-core", final: true, hardFailure: true, reasonCode: "RUNTIME_METADATA_MISMATCH" }));
+  failed = apply(plan, failed, event("rejected", { stageId: "audit-core", final: false, hardFailure: true, reasonCode: "RUNTIME_METADATA_MISMATCH" }));
   assert.equal(failed.delegationStopped, true);
+  assert.equal(failed.stages["audit-core"].finalRejection, true);
+  assert.equal(failed.stages["audit-core"].attempts[0].rejection.final, false);
   assert.throws(() => apply(plan, failed, event("correction_authorized", {
     stageId: "audit-core", scopeHash: planHash, executionShape: "typed_child",
   })), TypeError);
@@ -176,6 +247,20 @@ test("hard final rejections, cancellation, and rejected dependencies never unloc
   approved = apply(plan, approved, event("stage_cancelled", { stageId: "audit-cli", authority: "owner", factId: "cancel-cli" }));
   assert.equal(approved.stages["audit-cli"].state, "closed");
   assert.equal(approved.stages["audit-cli"].cancelled, true);
+
+  let adoptedCore = apply(plan, evidence(plan, startCanary(plan, initializedWorkflow().state)), event("verified", {
+    stageId: "audit-core", checkHash: HASH("d"),
+  }));
+  adoptedCore = apply(plan, adoptedCore, event("adopted", {
+    stageId: "audit-core", rootVerification: { pass: true, checkHash: HASH("e") },
+  }));
+  adoptedCore = apply(plan, adoptedCore, event("approval_recorded", {
+    authority: "owner", factId: "cancel-dependent", scopeHash: planHash, recordedAt: "2026-07-15T00:00:00.000Z",
+  }));
+  adoptedCore = apply(plan, adoptedCore, event("stage_cancelled", {
+    stageId: "audit-cli", authority: "owner", factId: "cancel-dependent",
+  }));
+  assert.throws(() => apply(plan, adoptedCore, event("stage_ready", { stageId: "verify-evidence" })), TypeError);
 });
 
 test("sanitized materialization events replay without raw receipt identifiers", () => {
