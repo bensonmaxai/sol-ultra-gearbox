@@ -5,6 +5,16 @@ dispatch child agents. Workflow skills remain active on the Sol root. Gearbox
 does not replace their planning, review loops, artifact handoffs, or acceptance
 criteria.
 
+## Workflow state ownership
+
+Keep the upstream workflow skill's plan and progress ledger as the source of
+truth. Compile its bounded stages into schema version 2 packets, return
+append-only lifecycle events and privacy-safe outcomes upstream, and never
+create a second managed history beside a compatible upstream store. Use the
+private Gearbox ledger only when no compatible source exists. Resume adopted
+stages without rerunning them; incomplete executions block until Sol resolves
+them.
+
 The compatibility gate runs before `executing-plans` decides that subagents
 are unavailable, and immediately before an actual `spawn_agent` call or
 equivalent dispatch intent. Merely mentioning subagents, multi-agent work, or

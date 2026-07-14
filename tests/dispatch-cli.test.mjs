@@ -111,6 +111,17 @@ async function fixture(t, { policy = true, policyMode = "shadow" } = {}) {
       const agentsSource = "# Managed fixture\n";
       const agentsDigest = createHash("sha256").update(agentsSource).digest("hex");
       await writeFile(agentsPath, agentsSource, { mode: 0o644 });
+      const workflowContractSource = await readFile(join(REPO_ROOT, "docs", "workflow-contract-evidence.json"), "utf8");
+      const workflowContract = JSON.parse(workflowContractSource);
+      for (const entry of workflowContract.sourceManifest) {
+        const targetPath = join(home, entry.path);
+        await mkdir(dirname(targetPath), { recursive: true, mode: 0o700 });
+        await writeFile(targetPath, await readFile(join(REPO_ROOT, entry.path)), { mode: 0o644 });
+      }
+      const workflowContractPath = join(home, "docs", "workflow-contract-evidence.json");
+      await mkdir(dirname(workflowContractPath), { recursive: true, mode: 0o700 });
+      await writeFile(workflowContractPath, workflowContractSource, { mode: 0o644 });
+      const workflowContractDigest = createHash("sha256").update(workflowContractSource).digest("hex");
       const files = [{
         kind: "dispatch-policy",
         sourcePath: null,
@@ -190,6 +201,7 @@ async function fixture(t, { policy = true, policyMode = "shadow" } = {}) {
           policySha256: JSON.parse(source).sha256,
           acceptanceBindingSha256: "a".repeat(64),
           writingSkillsEvidenceSha256: "b".repeat(64),
+          workflowContractEvidenceSha256: workflowContractDigest,
         },
         config: { path: configPath, mode: 0o600, afterSha256: configDigest },
         agents: { path: agentsPath, mode: 0o644, afterSha256: agentsDigest },
@@ -417,6 +429,7 @@ test("active policy requires its applied manifest before planning", async (t) =>
     (value) => { value.status = "applying"; },
     (value) => { value.activation.acceptanceBindingSha256 = "invalid"; },
     (value) => { value.activation.writingSkillsEvidenceSha256 = "invalid"; },
+    (value) => { value.activation.workflowContractEvidenceSha256 = "invalid"; },
     (value) => { value.files[0].mode = 0o644; },
     (value) => { value.files.push({ ...value.files[0] }); },
     (value) => { value.staticChecks.configLoad = false; },
@@ -430,6 +443,25 @@ test("active policy requires its applied manifest before planning", async (t) =>
     assert.doesNotMatch(blocked.stdout, /manifest|acceptanceBinding|policySha256/);
   }
   await writeFile(policy.activation.manifestPath, manifestSource, { mode: 0o600 });
+  const workflowContractPath = join(home, "docs", "workflow-contract-evidence.json");
+  const workflowContractSource = await readFile(workflowContractPath, "utf8");
+  const workflowContract = JSON.parse(workflowContractSource);
+  const workflowSourcePath = join(home, workflowContract.sourceManifest[0].path);
+  const workflowSource = await readFile(workflowSourcePath, "utf8");
+  await writeFile(workflowSourcePath, `${workflowSource}\nsource drift\n`);
+  assert.deepEqual(
+    jsonOnly(await run(["status"], { CODEX_HOME: home })),
+    { status: "GEARBOX_DISPATCH_OFF", mode: "off" },
+  );
+  await writeFile(workflowSourcePath, workflowSource);
+  const staleContract = structuredClone(workflowContract);
+  staleContract.passedScenarioCount = 4;
+  await writeFile(workflowContractPath, `${JSON.stringify(staleContract)}\n`);
+  assert.deepEqual(
+    jsonOnly(await run(["status"], { CODEX_HOME: home })),
+    { status: "GEARBOX_DISPATCH_OFF", mode: "off" },
+  );
+  await writeFile(workflowContractPath, workflowContractSource);
   const runtimeEntry = manifest.files.find(
     (entry) => entry.kind === "dispatch-runtime" && entry.sourcePath.endsWith("lib/workflow-cli.mjs"),
   );

@@ -8,6 +8,7 @@ import {
   cleanupProbeArtifacts,
   DISPATCH_RUNTIME_FILES,
   ROLE_SPECS,
+  readCurrentWorkflowContractEvidence,
   redactSensitive,
   sha256,
   validatePostInstallRootRuntime,
@@ -113,7 +114,15 @@ async function activeManifestEvidence(policy) {
       ) ||
       !/^[a-f0-9]{64}$/.test(
         manifest.activation?.writingSkillsEvidenceSha256 ?? "",
+      ) ||
+      !/^[a-f0-9]{64}$/.test(
+        manifest.activation?.workflowContractEvidenceSha256 ?? "",
       )
+    ) return null;
+    const workflowContract = await readCurrentWorkflowContractEvidence(repositoryRoot);
+    if (
+      workflowContract.sha256 !==
+      manifest.activation.workflowContractEvidenceSha256
     ) return null;
     if (manifest.staticChecks === null || typeof manifest.staticChecks !== "object" ||
       !["strictConfig", "configLoad", "mcpConfig", "installation"].every((key) => manifest.staticChecks[key] === true)) return null;

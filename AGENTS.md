@@ -22,3 +22,13 @@
 - Any role mismatch, schema mismatch, unexpected write, descendant spawn, or missing metadata is a hard failure.
 - Keep `terra_max_worker` as a compatibility role but do not make it the default route.
 - Keep raw `reports/` local and run `npm run release:check` before publication.
+
+## Verified workflow boundary
+
+<!-- BEGIN sol-ultra-gearbox-v2:workflow -->
+- Use a validated DAG and exact schema version 2 stage packets only for multi-stage dependency-bearing work; direct bounded work remains packet v1.
+- Preserve reserved verification and recovery attempts. The first real execution is the canary; require a persisted running/completed receipt before releasing another stage.
+- Process evidence, mechanical verify, explicit Sol adopt, then provider close. Verified is not adopted.
+- Keep a compatible upstream workflow store as the source of truth. Use one private managed ledger only when no compatible source exists; resume adopted work without rerunning it and block incomplete executions.
+- Workflow execution remains `root_inline`, `typed_child`, or `isolated_role_root`; `app_thread_root` is not enabled. This is not a Codex core hook.
+<!-- END sol-ultra-gearbox-v2:workflow -->

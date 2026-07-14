@@ -158,6 +158,25 @@ record a privacy-safe outcome, and clean the packet. See the
 [quality-first dispatch reference](skills/sol-ultra-gearbox/references/quality-first-dispatch.md)
 for the complete contract.
 
+## Verified workflow orchestration
+
+Dependency-bearing work may use a validated DAG and schema-version-2 stage
+packets. Gearbox preserves verification and recovery reserves, materializes the
+first real execution as a canary, and releases no deferred stage until a
+persisted running/completed receipt exists. Accepted work follows the order
+evidence -> mechanical verification -> explicit Sol adoption -> provider close.
+
+A compatible upstream workflow store remains the source of truth; the private
+managed ledger is used only when no compatible upstream source exists. Resume
+keeps adopted work closed and blocks incomplete executions instead of silently
+rerunning them. Supported shapes remain `root_inline`, `typed_child`, and
+`isolated_role_root`. `app_thread_root` is not enabled, and this repository does
+not provide a Codex core hook.
+
+The deterministic five-scenario artifact and Q10 canary establish the public
+contract without claiming speed, savings, or better output quality. See the
+[verified workflow operator contract](skills/sol-ultra-gearbox/references/verified-workflows.md).
+
 ## Requirements
 
 - Node.js 20 or newer
@@ -315,6 +334,18 @@ npm run release:evidence -- \
   --sdd reports/<run>/sdd.json \
   --acceptance reports/<run>/acceptance.json \
   --activation-manifest reports/<run>/install-manifest.json \
+  --workflow-contract docs/workflow-contract-evidence.json \
+  --usage reports/<run>/real-work-usage.json
+```
+
+When the ignored reports directory contains one unambiguous newest current
+set, omit the four runtime paths and let the verifier select it without
+printing private paths:
+
+```bash
+npm run release:evidence -- \
+  --latest-current \
+  --workflow-contract docs/workflow-contract-evidence.json \
   --usage reports/<run>/real-work-usage.json
 ```
 

@@ -31,11 +31,29 @@ rejection.
 3. Run `gearbox-dispatch plan` with separate `agentTypeVisible`,
    `isolatedRunnerVerified`, runtime-metadata, and permission facts.
 4. `root_inline`: Sol completes the task.
-5. `typed_child`: Sol calls `spawn_agent` with exact typed arguments, waits, closes the child, and validates runtime evidence.
+5. `typed_child`: Sol calls `spawn_agent` with exact typed arguments, persists the receipt, collects evidence, mechanically verifies it, explicitly adopts it, and only then closes the provider.
 6. `isolated_role_root`: run `gearbox-dispatch run-isolated`; it is an isolated root, never a child.
 7. Reject missing or mismatched evidence before integration.
 8. On a hard active-mode failure, stop delegation and use the hash-bound policy activation manifest with the managed rollback command.
 9. Sol integrates, runs final relevant tests, records the privacy-safe outcome, and cleans the packet.
+
+Direct bounded packet-v1 work keeps this routing behavior. For a validated DAG,
+compile a self-contained schema version 2 packet for each stage and use the
+verified workflow lifecycle below.
+
+## Verified workflow lifecycle
+
+Preserve reserved verification and recovery attempts. Materialize the first
+real execution as the canary, require a persisted running/completed receipt,
+and release no deferred stage when the canary fails. Then collect evidence,
+verify hashes/runtime/scope, obtain explicit Sol adoption, and close the
+provider. `verified` alone never unlocks a dependent.
+
+Treat a compatible upstream workflow store as the source of truth; use one
+private managed ledger only when no compatible upstream source exists. Resume
+adopted work without rerunning it and block incomplete executions. Workflow
+shapes remain `root_inline`, `typed_child`, and `isolated_role_root`;
+`app_thread_root` is not enabled. This is not a Codex core hook.
 
 The only shape names are `root_inline`, `typed_child`, `isolated_role_root`,
 and `typed_child_bridge`. Verified Luna/Terra isolated roots solve read-only

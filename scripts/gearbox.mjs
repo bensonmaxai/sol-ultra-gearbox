@@ -40,6 +40,7 @@ import {
   hashTree,
   installDispatchRuntime,
   readOptional,
+  readCurrentWorkflowContractEvidence,
   redactSensitive,
   removeOwnedSmokeProjectEntries,
   renderAgentsMd,
@@ -1845,7 +1846,14 @@ async function readManagedPolicyTarget(path) {
   return assertManagedPolicyTarget(source);
 }
 
-async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null } = {}) {
+async function installAfterSmoke(
+  smoke,
+  {
+    dispatchMode = null,
+    acceptance = null,
+    workflowContractEvidenceSha256 = null,
+  } = {},
+) {
   if (dispatchMode !== null && !["shadow", "active"].includes(dispatchMode)) {
     throw new Error("dispatch mode must be shadow or active");
   }
@@ -1860,6 +1868,9 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
       reportFile: { pathConfined: true, regular: true, symlink: false },
     });
     if (!trusted.pass) throw new Error("active dispatch requires trusted acceptance evidence");
+    if (!/^[a-f0-9]{64}$/.test(workflowContractEvidenceSha256 ?? "")) {
+      throw new Error("active dispatch requires current workflow contract evidence");
+    }
   }
   const policy = dispatchMode === null ? null : createDispatchPolicy(
     dispatchMode === "active"
@@ -1869,6 +1880,12 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
   const policySource = policy === null ? null : serializeDispatchPolicy(policy);
   const policyTarget = join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH);
   if (policySource !== null) await readManagedPolicyTarget(policyTarget);
+  if (dispatchMode === "active") {
+    const currentWorkflowContract = await readCurrentWorkflowContractEvidence(REPO_ROOT);
+    if (currentWorkflowContract.sha256 !== workflowContractEvidenceSha256) {
+      throw new Error("workflow contract evidence drifted before active apply");
+    }
+  }
   const backupDirectory = join(
     CODEX_HOME,
     "backups",
@@ -1951,6 +1968,7 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
       acceptanceBindingSha256: acceptance.runtimeBinding.sha256,
       writingSkillsEvidenceSha256:
         smoke.writingSkillsAdapter.evidenceSha256,
+      workflowContractEvidenceSha256,
     } : null,
     config: {
       path: configPath,
@@ -2084,9 +2102,23 @@ async function cleanupSmokeProjects(manifestPath) {
   return manifest.postApplyCleanup;
 }
 
-export async function dryRunApply({ dispatchMode = null } = {}) {
+export async function dryRunApply({
+  dispatchMode = null,
+  expectedWorkflowContractEvidenceSha256 = null,
+} = {}) {
   if (dispatchMode !== null && !["shadow", "active"].includes(dispatchMode)) {
     throw new Error("dispatch mode must be shadow or active");
+  }
+  const currentWorkflowContract = dispatchMode === "active"
+    ? await readCurrentWorkflowContractEvidence(REPO_ROOT)
+    : null;
+  if (
+    currentWorkflowContract !== null &&
+    (!/^[a-f0-9]{64}$/.test(currentWorkflowContract.sha256 ?? "") ||
+      (expectedWorkflowContractEvidenceSha256 !== null &&
+        currentWorkflowContract.sha256 !== expectedWorkflowContractEvidenceSha256))
+  ) {
+    throw new Error("active dry run requires current workflow contract evidence");
   }
   const doctor = await runDoctor();
   const configPath = join(CODEX_HOME, "config.toml");
@@ -2105,6 +2137,7 @@ export async function dryRunApply({ dispatchMode = null } = {}) {
       policySha256: sha256(policySource),
       runtime: DISPATCH_RUNTIME_FILES.map((path) => ({ path, sha256: null })),
       wrapper: { path: "scripts/gearbox-dispatch", sha256: null },
+      workflowContractEvidenceSha256: currentWorkflowContract?.sha256 ?? null,
       acceptanceRequired: dispatchMode === "active",
       acceptanceValidated: false,
     };
@@ -2222,8 +2255,15 @@ async function main() {
     if (args.includes("--dispatch-mode") && !dispatchMode) {
       throw new Error("--dispatch-mode requires a mode");
     }
+    const workflowContractEvidence = dispatchMode === "active"
+      ? await readCurrentWorkflowContractEvidence(REPO_ROOT)
+      : null;
     if (args.includes("--dry-run")) {
-      const report = await dryRunApply({ dispatchMode });
+      const report = await dryRunApply({
+        dispatchMode,
+        expectedWorkflowContractEvidenceSha256:
+          workflowContractEvidence?.sha256 ?? null,
+      });
       process.stdout.write(`${JSON.stringify(redactSensitive(report), null, 2)}\n`);
       if (!report.pass) process.exitCode = 1;
       return;
@@ -2255,7 +2295,11 @@ async function main() {
     if (dispatchMode === "active" && !acceptance.pass) {
       throw new Error("Acceptance exam failed; global config was not changed");
     }
-    const result = await installAfterSmoke(smoke, { dispatchMode, acceptance });
+    const result = await installAfterSmoke(smoke, {
+      dispatchMode,
+      acceptance,
+      workflowContractEvidenceSha256: workflowContractEvidence?.sha256 ?? null,
+    });
     process.stdout.write("GEARBOX_APPLY_PASS\n");
     process.stdout.write(`MANIFEST ${result.manifestPath}\n`);
     return;

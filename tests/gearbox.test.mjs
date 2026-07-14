@@ -21,7 +21,9 @@ import {
   cleanupProbeArtifacts,
   DISPATCH_RUNTIME_FILES,
   RUNTIME_BINDING_FILES,
+  WORKFLOW_CONTRACT_SOURCE_PATHS,
   installDispatchRuntime,
+  readCurrentWorkflowContractEvidence,
   rollbackDispatchRuntime,
   redactSensitive,
   removeOwnedSmokeProjectEntries,
@@ -38,6 +40,7 @@ import {
   writeJson,
 } from "../lib/gearbox.mjs";
 import { createDispatchPolicy, serializeDispatchPolicy } from "../lib/dispatch-policy.mjs";
+import { WORKFLOW_CONTRACT_SOURCE_PATHS as EVIDENCE_SOURCE_PATHS } from "../lib/workflow-contract-evidence.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -461,6 +464,14 @@ test("workflow runtime inventory installs every CLI dependency and binds only de
   }
   assert.equal(new Set(DISPATCH_RUNTIME_FILES).size, DISPATCH_RUNTIME_FILES.length);
   assert.equal(new Set(RUNTIME_BINDING_FILES).size, RUNTIME_BINDING_FILES.length);
+});
+
+test("the active workflow contract is exact, current, and shared with its deterministic generator", async () => {
+  assert.deepEqual(WORKFLOW_CONTRACT_SOURCE_PATHS, EVIDENCE_SOURCE_PATHS);
+  const current = await readCurrentWorkflowContractEvidence(REPO_ROOT);
+  assert.match(current.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(current.evidence.scenarioCount, 5);
+  assert.equal(current.evidence.passedScenarioCount, 5);
 });
 
 test("installed dispatch runtime has a complete relative-import closure", async () => {

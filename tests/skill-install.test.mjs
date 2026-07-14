@@ -30,6 +30,7 @@ async function fixture(t) {
     "references/routing-matrix.md": "# Routing\n",
     "references/subagent-skill-compatibility.md": "# Compatibility\n",
     "references/quality-first-dispatch.md": "# Quality-first dispatch\n",
+    "references/verified-workflows.md": "# Verified workflows\n",
   };
   for (const [path, content] of Object.entries(files)) {
     await mkdir(dirname(join(source, path)), { recursive: true });
@@ -63,8 +64,18 @@ test("skill install is preview-only by default and idempotent after apply", asyn
     status.sourceFiles.includes("references/subagent-skill-compatibility.md"),
   );
   assert.ok(status.sourceFiles.includes("references/quality-first-dispatch.md"));
+  assert.ok(status.sourceFiles.includes("references/verified-workflows.md"));
   const repeated = await installSkill({ source, target, apply: true });
   assert.equal(repeated.action, "up_to_date");
+});
+
+test("skill install refuses a source missing the verified workflow contract", async (t) => {
+  const { source, target } = await fixture(t);
+  await rm(join(source, "references", "verified-workflows.md"));
+  await assert.rejects(
+    installSkill({ source, target }),
+    /Skill source is missing references\/verified-workflows\.md/,
+  );
 });
 
 test("skill install refuses a source missing the quality-first dispatch contract", async (t) => {

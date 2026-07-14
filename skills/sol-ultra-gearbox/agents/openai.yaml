@@ -1,4 +1,4 @@
 interface:
   display_name: "Sol Ultra Gearbox"
-  short_description: "Route Sol root modes and typed subagents safely"
-  default_prompt: "Use $sol-ultra-gearbox to audit this Codex multi-agent setup and report the safest verified next action."
+  short_description: "Verify and orchestrate bounded Codex workflows"
+  default_prompt: "Use $sol-ultra-gearbox to audit this Codex setup and choose the safest verified workflow or direct execution path."

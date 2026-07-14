@@ -13,7 +13,12 @@ import {
   validateActiveConfigBinding,
   validateActiveInstallationSummary,
   validateReleaseEvidence,
+  validateWorkflowContractSummary,
 } from "../lib/release-evidence.mjs";
+import {
+  chooseLatestCurrentReportSet,
+  publicLatestCurrentSelection,
+} from "../scripts/release-evidence.mjs";
 
 function sourceManifest(overrides = {}) {
   return createSourceManifest({
@@ -85,6 +90,11 @@ function evidence(source = sourceManifest()) {
         runtimeBindingSha256: "b".repeat(64),
       },
     },
+    workflowContract: {
+      deterministicScenarioCount: 5,
+      deterministicPass: true,
+      q10CanaryVerified: true,
+    },
     costEvidence: {
       kind: "real_work",
       observedRuntime: {
@@ -145,7 +155,57 @@ test("release evidence validates exact source and rendered Markdown", () => {
   assert.equal(result.pass, true);
   assert.equal(result.checks.acceptanceExam, true);
   assert.equal(result.checks.activeInstallation, true);
+  assert.equal(result.checks.workflowContract, true);
   assert.match(markdown, /Writing-skills pressure test: PASS \(5 RED, 5 GREEN\)/);
+  assert.match(markdown, /Verified workflow contract: PASS \(5\/5\).*Q10 canary: verified/i);
+});
+
+test("release evidence requires the exact five-scenario workflow summary and Q10 canary", () => {
+  const valid = {
+    deterministicScenarioCount: 5,
+    deterministicPass: true,
+    q10CanaryVerified: true,
+  };
+  assert.equal(validateWorkflowContractSummary(valid).pass, true);
+  for (const mutate of [
+    (value) => { value.deterministicScenarioCount = 4; },
+    (value) => { value.deterministicPass = false; },
+    (value) => { value.q10CanaryVerified = false; },
+    (value) => { value.rawTopology = "private"; },
+  ]) {
+    const summary = structuredClone(valid);
+    mutate(summary);
+    assert.equal(validateWorkflowContractSummary(summary).pass, false);
+  }
+  const current = sourceManifest();
+  const missing = evidence(current);
+  delete missing.workflowContract;
+  const finalized = finalizeReleaseEvidence(missing);
+  assert.equal(validateReleaseEvidence({
+    evidence: finalized,
+    markdown: renderReleaseEvidence(finalized),
+    currentSource: current,
+  }).checks.workflowContract, false);
+});
+
+test("latest-current selection is newest, fails closed on absence or ambiguity, and publishes hashes only", () => {
+  const reports = (suffix, rank) => ({
+    rank,
+    reports: Object.fromEntries(["smoke", "sdd", "acceptance", "activationManifest"].map((kind) => [kind, {
+      kind,
+      path: `/private/${kind}-${suffix}.json`,
+      sha256: suffix.repeat(64).slice(0, 64),
+    }])),
+  });
+  const older = reports("a", [1, 1, 1, 1]);
+  const newer = reports("b", [2, 2, 2, 2]);
+  const selected = chooseLatestCurrentReportSet([older, newer]);
+  assert.equal(selected, newer);
+  const publicValue = publicLatestCurrentSelection(selected);
+  assert.deepEqual(publicValue.inputs.map((entry) => entry.kind), ["smoke", "sdd", "acceptance", "activationManifest"]);
+  assert.doesNotMatch(JSON.stringify(publicValue), /private|path|\.json/);
+  assert.throws(() => chooseLatestCurrentReportSet([]), /no current report set/i);
+  assert.throws(() => chooseLatestCurrentReportSet([newer, reports("c", [2, 2, 2, 2])]), /ambiguous/i);
 });
 
 test("release evidence rejects incomplete writing-skills pressure evidence", () => {

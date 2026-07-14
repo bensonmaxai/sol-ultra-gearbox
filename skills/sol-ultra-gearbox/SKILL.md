@@ -33,6 +33,10 @@ Read [references/quality-first-dispatch.md](references/quality-first-dispatch.md
 before planning or executing supported delegated work in `shadow` or `active`
 mode.
 
+Read [references/verified-workflows.md](references/verified-workflows.md) before
+any supported multi-stage dispatch with dependencies, artifact handoffs,
+approval facts, or resumable progress.
+
 ## Run the least costly gate
 
 For an audit or planned change, run:
@@ -145,6 +149,21 @@ Require distinct non-empty task messages plus persisted child role, model,
 effort, sandbox, lineage, marker, token, descendant, writer, and filesystem
 evidence; do not require byte-identical persisted prompt text.
 
+## Orchestrate verified workflows
+
+Use a validated DAG and schema version 2 stage packets only for dependency-
+bearing work; direct bounded tasks remain packet v1. Preserve reserved verification
+and recovery attempts. The first real execution is the canary,
+and no deferred stage launches before its persisted receipt.
+
+Follow the exact lifecycle: collect evidence, mechanically verify it, obtain
+explicit Sol adopt, then provider close. Treat a compatible upstream store as the source of truth,
+and resume adopted stages without rerunning them. The
+supported workflow shapes are `root_inline`, `typed_child`, and
+`isolated_role_root`; `app_thread_root` is not enabled. This is not a Codex core hook.
+Use the verified-workflows reference for the complete plan, scheduling,
+acceptance, recovery, failure, and privacy contract.
+
 ## Adapt skill-driven delegation
 
 Keep workflow skills active on the Sol root. They may own planning, task order,
@@ -241,7 +260,7 @@ the managed command; it disables the folder instead of deleting it.
 ## Prepare a public release
 
 Generate the paired machine-readable and Markdown evidence with
-`npm run release:evidence -- --smoke <path> --sdd <path> --acceptance <path> --activation-manifest <path> --usage <path>`, then
+`npm run release:evidence -- --latest-current --workflow-contract docs/workflow-contract-evidence.json --usage <path>`, then
 run unit tests, `npm run release:check`, the official skill validator when
 available, and a local secret scanner. Keep raw reports, auth state, complete
 user config, rollout contents, and private filesystem paths out of Git.
