@@ -180,3 +180,13 @@ test("rejects a stage output that collides with a plan input artifact", () => {
   assert.equal(result.pass, false);
   assert.match(result.errors.join("\n"), /multiple producers for artifact: repository-snapshot/);
 });
+
+test("returns validation errors for malformed competing writer scopes", () => {
+  const plan = clonedPlan();
+  plan.stages[0].writeScope = [42];
+  plan.stages[1].writeScope = [43];
+  let result;
+  assert.doesNotThrow(() => result = validateWorkflowPlan(plan, OPTIONS));
+  assert.equal(result.pass, false);
+  assert.match(result.errors.join("\n"), /writeScope must be an array of non-empty strings/);
+});
