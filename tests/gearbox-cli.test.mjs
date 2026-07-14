@@ -12,6 +12,19 @@ import {
 
 const REPO_ROOT = resolve(new URL("..", import.meta.url).pathname);
 const CLI = join(REPO_ROOT, "scripts", "gearbox.mjs");
+const WORKFLOW_RUNTIME_FILES = [
+  "lib/workflow-plan.mjs",
+  "lib/workflow-compiler.mjs",
+  "lib/workflow-state.mjs",
+  "lib/workflow-scheduler.mjs",
+  "lib/workflow-orchestrator.mjs",
+  "lib/private-jsonl.mjs",
+  "lib/workflow-ledger.mjs",
+  "lib/workflow-recovery.mjs",
+  "lib/workflow-outcome.mjs",
+  "lib/owned-packet.mjs",
+  "lib/workflow-cli.mjs",
+];
 
 async function tree(root) {
   const output = {};
@@ -83,6 +96,13 @@ if (args[0] === "features" && args[1] === "list") {
   assert.equal(report.changes.dispatch.mode, "active");
   assert.equal(report.changes.dispatch.acceptanceRequired, true);
   assert.equal(report.changes.dispatch.acceptanceValidated, false);
+  assert.deepEqual(
+    WORKFLOW_RUNTIME_FILES,
+    report.changes.dispatch.runtime
+      .map((entry) => entry.path)
+      .filter((path) => WORKFLOW_RUNTIME_FILES.includes(path)),
+  );
+  assert.ok(report.changes.dispatch.runtime.every((entry) => /^[a-f0-9]{64}$/.test(entry.sha256)));
   assert.deepEqual(after, before);
 });
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -40,6 +40,32 @@ import {
 import { createDispatchPolicy, serializeDispatchPolicy } from "../lib/dispatch-policy.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
+
+const WORKFLOW_RUNTIME_FILES = [
+  "lib/workflow-plan.mjs",
+  "lib/workflow-compiler.mjs",
+  "lib/workflow-state.mjs",
+  "lib/workflow-scheduler.mjs",
+  "lib/workflow-orchestrator.mjs",
+  "lib/private-jsonl.mjs",
+  "lib/workflow-ledger.mjs",
+  "lib/workflow-recovery.mjs",
+  "lib/workflow-outcome.mjs",
+  "lib/owned-packet.mjs",
+  "lib/workflow-cli.mjs",
+];
+
+const RUNTIME_BINDING_ONLY_FILES = [
+  "lib/workflow-contract-evidence.mjs",
+  "scripts/workflow-contract-evidence.mjs",
+  "docs/workflow-contract-evidence.json",
+];
+
+function relativeImports(source) {
+  return [...source.matchAll(
+    /\b(?:import|export)\s+(?:[^"'`;]*?\s+from\s+)?["'](\.[^"']+)["']/g,
+  )].map((match) => match[1]);
+}
 
 const CONFIG_FIXTURE = `model = "gpt-5.6-sol"
 model_reasoning_effort = "max"
@@ -404,6 +430,9 @@ test("all runtime evidence collectors use the one exact unique source inventory"
     "scripts/gearbox.mjs",
     "scripts/codex-typed-agent",
     ...DISPATCH_RUNTIME_FILES,
+    "lib/workflow-contract-evidence.mjs",
+    "scripts/workflow-contract-evidence.mjs",
+    "docs/workflow-contract-evidence.json",
     "scripts/gearbox-dispatch",
   ].filter((path, index, paths) => paths.indexOf(path) === index));
   const [gearboxScript, releaseEvidenceScript] = await Promise.all([
@@ -413,6 +442,42 @@ test("all runtime evidence collectors use the one exact unique source inventory"
   for (const source of [gearboxScript, releaseEvidenceScript]) {
     assert.match(source, /RUNTIME_BINDING_FILES/);
     assert.doesNotMatch(source, /const RUNTIME_BINDING_PATHS/);
+  }
+});
+
+test("workflow runtime inventory installs every CLI dependency and binds only deterministic evidence inputs", async () => {
+  for (const path of WORKFLOW_RUNTIME_FILES) {
+    assert.ok(DISPATCH_RUNTIME_FILES.includes(path), path);
+    assert.ok(RUNTIME_BINDING_FILES.includes(path), path);
+    assert.ok(
+      DISPATCH_RUNTIME_FILES.indexOf(path) <
+        DISPATCH_RUNTIME_FILES.indexOf("scripts/gearbox-dispatch.mjs"),
+      `${path} must precede the installed CLI`,
+    );
+  }
+  for (const path of RUNTIME_BINDING_ONLY_FILES) {
+    assert.ok(RUNTIME_BINDING_FILES.includes(path), path);
+    assert.equal(DISPATCH_RUNTIME_FILES.includes(path), false, path);
+  }
+  assert.equal(new Set(DISPATCH_RUNTIME_FILES).size, DISPATCH_RUNTIME_FILES.length);
+  assert.equal(new Set(RUNTIME_BINDING_FILES).size, RUNTIME_BINDING_FILES.length);
+});
+
+test("installed dispatch runtime has a complete relative-import closure", async () => {
+  const installed = new Set(DISPATCH_RUNTIME_FILES);
+  const pending = ["scripts/gearbox-dispatch.mjs", ...DISPATCH_RUNTIME_FILES];
+  const visited = new Set();
+  while (pending.length > 0) {
+    const path = pending.pop();
+    if (visited.has(path)) continue;
+    visited.add(path);
+    const source = await readFile(join(REPO_ROOT, path), "utf8");
+    for (const specifier of relativeImports(source)) {
+      const imported = relative(REPO_ROOT, resolve(dirname(join(REPO_ROOT, path)), specifier));
+      if (imported.startsWith("..")) continue;
+      assert.ok(installed.has(imported), `${path} imports missing runtime module ${imported}`);
+      pending.push(imported);
+    }
   }
 });
 

@@ -430,7 +430,10 @@ test("active policy requires its applied manifest before planning", async (t) =>
     assert.doesNotMatch(blocked.stdout, /manifest|acceptanceBinding|policySha256/);
   }
   await writeFile(policy.activation.manifestPath, manifestSource, { mode: 0o600 });
-  const runtimeEntry = manifest.files.find((entry) => entry.kind === "dispatch-runtime");
+  const runtimeEntry = manifest.files.find(
+    (entry) => entry.kind === "dispatch-runtime" && entry.sourcePath.endsWith("lib/workflow-cli.mjs"),
+  );
+  assert.ok(runtimeEntry);
   const runtimeSource = await readFile(runtimeEntry.targetPath, "utf8");
   await writeFile(runtimeEntry.targetPath, `${runtimeSource}drift\n`);
   assert.deepEqual(
@@ -444,6 +447,36 @@ test("active policy requires its applied manifest before planning", async (t) =>
     { status: "GEARBOX_DISPATCH_OFF", mode: "off" },
   );
   await chmod(runtimeEntry.targetPath, 0o644);
+  const assertManifestDriftFailsClosed = async (mutate) => {
+    const drift = structuredClone(manifest);
+    mutate(drift, drift.files.find((entry) => entry.targetPath === runtimeEntry.targetPath));
+    await writeFile(policy.activation.manifestPath, `${JSON.stringify(drift)}\n`, { mode: 0o600 });
+    assert.deepEqual(
+      jsonOnly(await run(["status"], { CODEX_HOME: home })),
+      { status: "GEARBOX_DISPATCH_OFF", mode: "off" },
+    );
+    await writeFile(policy.activation.manifestPath, manifestSource, { mode: 0o600 });
+  };
+  await assertManifestDriftFailsClosed((drift, entry) => {
+    void drift;
+    entry.sourcePath = join(home, "unmanaged-workflow-cli.mjs");
+  });
+  await assertManifestDriftFailsClosed((drift, entry) => {
+    void drift;
+    entry.targetPath = join(home, "gearbox", "runtime", "lib", "moved-workflow-cli.mjs");
+  });
+  await assertManifestDriftFailsClosed((drift, entry) => {
+    void drift;
+    entry.afterSha256 = "0".repeat(64);
+  });
+  await rm(runtimeEntry.targetPath);
+  await symlink(join(home, "bin", "gearbox-dispatch"), runtimeEntry.targetPath);
+  assert.deepEqual(
+    jsonOnly(await run(["status"], { CODEX_HOME: home })),
+    { status: "GEARBOX_DISPATCH_OFF", mode: "off" },
+  );
+  await rm(runtimeEntry.targetPath);
+  await writeFile(runtimeEntry.targetPath, runtimeSource, { mode: 0o644 });
   const wrapperEntry = manifest.files.find((entry) => entry.kind === "dispatch-wrapper");
   await chmod(wrapperEntry.targetPath, 0o644);
   assert.deepEqual(
