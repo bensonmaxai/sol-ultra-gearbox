@@ -54,6 +54,56 @@ test("root-inline and shadow decisions remain root-driven", () => {
   assert.equal(direct.action.decision.selectedShape, "root_inline");
 });
 
+function assertWorkflowRoot(action, reasonCode) {
+  assert.equal(action.kind, "root_inline");
+  assert.equal(action.decision.selectedShape, "root_inline");
+  assert.equal(action.decision.effectiveShape, "root_inline");
+  assert.equal(action.decision.role, null);
+  assert.equal(action.decision.spawnArgs, null);
+  assert.equal(action.decision.reasonCode, reasonCode);
+}
+
+test("workflow-level reserve and stop outcomes never emit delegated actions", () => {
+  const protectedWork = initializedWorkflow();
+  protectedWork.state.budget.consumed.total = 2;
+  assertWorkflowRoot(
+    planNextWorkflowAction({ ...protectedWork, policy, capabilities, roleSpecs: ROLE_SPECS }).action,
+    "ROOT_WORK_ATTEMPT_RESERVE_PROTECTED",
+  );
+
+  const exhaustedRecovery = initializedWorkflow({
+    plan: workflowPlan({ stages: [stage({ id: "recover", attemptClass: "recovery" })] }),
+  });
+  exhaustedRecovery.state.budget.consumed.total = 3;
+  exhaustedRecovery.state.budget.consumed.recovery = 1;
+  assertWorkflowRoot(
+    planNextWorkflowAction({ ...exhaustedRecovery, policy, capabilities, roleSpecs: ROLE_SPECS }).action,
+    "ROOT_RECOVERY_RESERVE_EXHAUSTED",
+  );
+
+  const stopped = initializedWorkflow();
+  stopped.state.delegationStopped = true;
+  stopped.state.stopReason = "WORKFLOW_CANARY_FAILED";
+  assertWorkflowRoot(
+    planNextWorkflowAction({ ...stopped, policy, capabilities, roleSpecs: ROLE_SPECS }).action,
+    "WORKFLOW_CANARY_FAILED",
+  );
+});
+
+test("an active batch cannot emit a delegated deferred action after delegation stops", () => {
+  const { plan, planHash, state } = initializedWorkflow();
+  const first = planNextWorkflowAction({ plan, planHash, state, policy, capabilities, roleSpecs: ROLE_SPECS });
+  let projected = state;
+  for (const event of first.readinessEvents) projected = reduceWorkflowEvent({ plan, state: projected, event });
+  projected = reduceWorkflowEvent({ plan, state: projected, event: first.batchEvent });
+  projected.activeBatch.canaryReady = true;
+  projected.delegationStopped = true;
+  projected.stopReason = "WORKFLOW_CANARY_FAILED";
+  const next = planNextWorkflowAction({ plan, planHash, state: projected, policy, capabilities, roleSpecs: ROLE_SPECS });
+  assertWorkflowRoot(next.action, "WORKFLOW_CANARY_FAILED");
+  assert.equal(next.action.stageId, "audit-cli");
+});
+
 test("typed receipts validate exact envelope and sanitize execution identities", () => {
   const action = {
     kind: "materialize",
@@ -77,11 +127,24 @@ test("typed receipts validate exact envelope and sanitize execution identities",
 test("providers reject shape and task mismatches and retain no raw identifiers", () => {
   const decision = { taskHash: "b".repeat(64), selectedShape: "root_inline", effectiveShape: "root_inline", role: null, spawnArgs: null };
   const provider = providerForDecision(decision);
-  assert.deepEqual(provider.capabilities, ["materialize", "readiness", "collectEvidence", "close"]);
+  for (const method of ["capabilities", "materialize", "readiness", "collectEvidence", "close"]) {
+    assert.equal(typeof provider[method], "function");
+  }
+  assert.deepEqual(provider.capabilities(), ["materialize", "readiness", "collectEvidence", "close"]);
   assert.throws(() => provider.materialize({ taskHash: "c".repeat(64) }), /task hash/);
   const action = provider.materialize({ taskHash: decision.taskHash, executionShape: "root_inline" });
   assert.equal(action.kind, "root_inline");
   assert.equal(JSON.stringify(action).includes("executionId"), false);
+  assert.deepEqual(provider.close({
+    taskHash: decision.taskHash,
+    executionShape: "root_inline",
+    disposition: "adopted",
+  }), {
+    kind: "provider_close",
+    taskHash: decision.taskHash,
+    executionShape: "root_inline",
+    disposition: "adopted",
+  });
 });
 
 test("canary timeout blocks deferred work without consuming its attempt", () => {
@@ -114,6 +177,23 @@ test("isolated receipt and every provider method reject mismatched shape or hash
     action,
     receipt: { schemaVersion: 1, executionShape: "isolated_role_root", taskHash: decision.taskHash, dispatchResult: { pass: true }, status: "completed" },
   }).pass, false);
+});
+
+test("delegated evidence is root-validated while root-inline evidence remains root-owned", () => {
+  const delegated = {
+    taskHash: "f".repeat(64), selectedShape: "isolated_role_root", effectiveShape: "isolated_role_root", role: "terra_explorer", spawnArgs: null,
+  };
+  const delegatedProvider = providerForDecision(delegated);
+  assert.throws(() => delegatedProvider.collectEvidence({
+    taskHash: delegated.taskHash,
+    executionShape: delegated.effectiveShape,
+    dispatchResult: { pass: true },
+  }), /dispatch result/);
+
+  const root = { taskHash: "c".repeat(64), selectedShape: "root_inline", effectiveShape: "root_inline", role: null, spawnArgs: null };
+  assert.deepEqual(providerForDecision(root).collectEvidence({ taskHash: root.taskHash, executionShape: "root_inline" }), {
+    kind: "root_collect_evidence", taskHash: root.taskHash, executionShape: "root_inline",
+  });
 });
 
 test("orchestrator actions and persisted summaries contain no raw execution identity", () => {

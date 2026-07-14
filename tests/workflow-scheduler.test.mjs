@@ -9,7 +9,7 @@ import { initializedWorkflow, stage, workflowPlan } from "./helpers/workflow-fix
 
 function decision(stageId, shape = "isolated_role_root") {
   return {
-    taskHash: `${stageId[0]}`.repeat(64),
+    taskHash: "a".repeat(64),
     selectedShape: shape,
     effectiveShape: shape,
     role: shape === "root_inline" ? null : "terra_explorer",
@@ -140,4 +140,14 @@ test("verification exhaustion blocks, recovery exhaustion roots inline, and stop
     candidate: selectCandidateBatch(stopped),
     decisions: new Map([["audit-core", decision("audit-core")]]),
   }).kind, "root_inline");
+});
+
+test("missing or malformed planner decisions fail closed to root-inline", () => {
+  const { plan, state } = initializedWorkflow({ ready: ["audit-core"] });
+  const candidate = selectCandidateBatch({ plan, state });
+  for (const decisions of [new Map(), new Map([["audit-core", { effectiveShape: "typed_child" }]])]) {
+    const result = scheduleWorkflow({ plan, state, candidate, decisions });
+    assert.equal(result.kind, "root_inline");
+    assert.equal(result.reasonCode, "ROOT_DECISION_INVALID");
+  }
 });
