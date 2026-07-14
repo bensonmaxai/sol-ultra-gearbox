@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, lstat, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -46,10 +46,11 @@ test("first shadow workflow call initializes private managed state and returns a
   });
   assert.equal(result.status, "GEARBOX_WORKFLOW_ACTION");
   assert.equal(result.mode, "shadow");
-  assert.equal(result.source, "managed");
+  assert.equal(result.stateSource, "managed");
   assert.equal(result.action.kind, "root_inline");
   assert.equal(result.action.stageId, "audit-core");
-  assert.doesNotMatch(JSON.stringify(result.public), /Audit two modules|workflow-ledger\.jsonl|\/private\//);
+  assert.deepEqual(Object.keys(result.action).sort(), ["attemptClass", "batchId", "executionShape", "kind", "reasonCode", "stageId", "taskHash"]);
+  assert.doesNotMatch(JSON.stringify(result.action), /Audit two modules|workflow-ledger\.jsonl|\/private\//);
   const ledger = join(cwd, "reports", "workflow-ledger.jsonl");
   assert.match(await readFile(ledger, "utf8"), /workflow_initialized/);
 });
@@ -66,9 +67,58 @@ test("upstream workflow state returns append arrays and never writes managed sto
     envelope: envelope({ stateSource: { kind: "upstream", schemaFields: ["workflowId", "planHash", "stageId", "state", "attempt", "executionShape", "role", "taskHash", "resultHash", "adopted", "updatedAt"], records: [] } }),
     policy: createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null }), capabilities, roleSpecs: ROLE_SPECS, cwd,
   });
-  assert.equal(result.source, "upstream");
+  assert.equal(result.stateSource, "upstream");
   assert.ok(result.recordsToAppend.length >= 1);
   assert.deepEqual(result.outcomesToAppend, []);
+  await assert.rejects(access(join(cwd, "reports", "workflow-ledger.jsonl")));
+});
+
+test("root-inline materialization rejects a task hash that differs from the scheduled action", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "workflow-cli-root-hash-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  for (const directory of ["lib", "scripts", "tests"]) {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(join(cwd, directory), { recursive: true });
+    await writeFile(join(cwd, directory, "fixture.txt"), "fixture\n");
+  }
+  const policy = createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null });
+  const first = await runWorkflowNext({ envelope: envelope(), policy, capabilities, roleSpecs: ROLE_SPECS, cwd });
+  const result = await runWorkflowNext({
+    envelope: envelope({ event: {
+      schemaVersion: 1, type: "materialization_started", at: "2026-07-15T00:00:00.000Z",
+      stageId: first.action.stageId, batchId: first.action.batchId, executionShape: "root_inline",
+      role: null, taskHash: "0".repeat(64), attemptClass: "work",
+    } }),
+    policy, capabilities, roleSpecs: ROLE_SPECS, cwd,
+  });
+  assert.equal(result.status, "GEARBOX_WORKFLOW_BLOCKED");
+});
+
+test("binding and malformed upstream source fail closed without a managed ledger fallback", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "workflow-cli-invalid-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const policy = createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null });
+  const binding = await runWorkflowNext({ envelope: envelope(), policy, capabilities, roleSpecs: ROLE_SPECS, cwd });
+  assert.equal(binding.status, "GEARBOX_WORKFLOW_BLOCKED");
+  assert.equal(binding.reasonCode, "WORKFLOW_BINDING_INVALID");
+  const upstream = await runWorkflowNext({
+    envelope: envelope({ stateSource: { kind: "upstream", schemaFields: [], records: [{ sentinel: "must-not-echo" }] } }),
+    policy, capabilities, roleSpecs: ROLE_SPECS, cwd,
+  });
+  assert.equal(upstream.status, "GEARBOX_WORKFLOW_BLOCKED");
+  assert.equal(upstream.stateSource, "upstream");
+  assert.equal(upstream.reasonCode, "WORKFLOW_UPSTREAM_STORE_INCOMPATIBLE");
+  for (const directory of ["lib", "scripts", "tests"]) {
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    await mkdir(join(cwd, directory), { recursive: true });
+    await writeFile(join(cwd, directory, "fixture.txt"), "fixture\n");
+  }
+  const invalidRecords = await runWorkflowNext({
+    envelope: envelope({ stateSource: { kind: "upstream", schemaFields: ["workflowId", "planHash", "stageId", "state", "attempt", "executionShape", "role", "taskHash", "resultHash", "adopted", "updatedAt"], records: [{ sentinel: "must-not-echo" }] } }),
+    policy, capabilities, roleSpecs: ROLE_SPECS, cwd,
+  });
+  assert.equal(invalidRecords.reasonCode, "WORKFLOW_UPSTREAM_STORE_INCOMPATIBLE");
+  assert.equal(JSON.stringify(invalidRecords).includes("must-not-echo"), false);
   await assert.rejects(access(join(cwd, "reports", "workflow-ledger.jsonl")));
 });
 
@@ -87,7 +137,7 @@ test("a fresh workflow call resumes adopted work without rematerializing it", as
   assert.match(action.batchId ?? "", /^[a-f0-9]{64}$/);
   const at = "2026-07-15T00:00:00.000Z";
   const events = [
-    { schemaVersion: 1, type: "materialization_started", at, stageId: action.stageId, batchId: action.batchId, executionShape: "root_inline", role: null, taskHash: action.decision.taskHash, attemptClass: "work" },
+    { schemaVersion: 1, type: "materialization_started", at, stageId: action.stageId, batchId: action.batchId, executionShape: "root_inline", role: null, taskHash: action.taskHash, attemptClass: "work" },
     { schemaVersion: 1, type: "materialized", at, stageId: action.stageId, batchId: action.batchId, status: "running" },
     { schemaVersion: 1, type: "evidence_ready", at, stageId: action.stageId, resultHash: "b".repeat(64), artifacts: [{ id: "core-evidence", sha256: "a".repeat(64) }], actualModel: "gpt-5.6-sol", actualEffort: "ultra", tokens: 1, reasonCode: "WORKFLOW_EVIDENCE_READY" },
     { schemaVersion: 1, type: "verified", at, stageId: action.stageId, checkHash: "c".repeat(64) },
@@ -106,6 +156,9 @@ test("a fresh workflow call resumes adopted work without rematerializing it", as
   assert.equal(releasedStageId, "audit-cli");
   const ledger = await readFile(join(cwd, "reports", "workflow-ledger.jsonl"), "utf8");
   assert.equal((ledger.match(/"eventType":"materialization_started"/g) ?? []).length, 1);
+  const outcomePath = join(cwd, "reports", "workflow-outcomes.jsonl");
+  assert.match(await readFile(outcomePath, "utf8"), /workflow_outcome/);
+  assert.equal((await lstat(outcomePath)).mode & 0o777, 0o600);
 });
 
 test("active typed workflow emits only the canary and rejects an unmatched receipt path", async (t) => {
@@ -139,7 +192,7 @@ test("active typed workflow emits only the canary and rejects an unmatched recei
   });
   assert.equal(bad.status, "GEARBOX_WORKFLOW_BLOCKED");
   const started = await runWorkflowNext({
-    envelope: envelope({ plan, event: { schemaVersion: 1, type: "materialization_started", at: "2026-07-15T00:00:00.000Z", stageId: "audit-core", batchId: first.action.batchId, executionShape: "typed_child", role: "terra_explorer", taskHash: first.action.decision.taskHash, attemptClass: "work" } }),
+    envelope: envelope({ plan, event: { schemaVersion: 1, type: "materialization_started", at: "2026-07-15T00:00:00.000Z", stageId: "audit-core", batchId: first.action.batchId, executionShape: "typed_child", role: "terra_explorer", taskHash: first.action.taskHash, attemptClass: "work" } }),
     policy, capabilities, roleSpecs: ROLE_SPECS, cwd,
   });
   assert.equal(started.action.kind, "wait");
@@ -179,10 +232,10 @@ test("hard rejection requires rollback only in active mode", async (t) => {
     const at = "2026-07-15T00:00:00.000Z";
     const start = {
       schemaVersion: 1, type: "materialization_started", at, stageId: action.stageId, batchId: action.batchId,
-      executionShape: action.decision.effectiveShape, role: action.decision.role, taskHash: action.decision.taskHash, attemptClass: "work",
+      executionShape: action.executionShape, role: action.role ?? null, taskHash: action.taskHash, attemptClass: "work",
     };
     await runWorkflowNext({ envelope: envelope({ plan, event: start }), policy, capabilities, roleSpecs: ROLE_SPECS, cwd });
-    const materialized = action.decision.effectiveShape === "typed_child"
+    const materialized = action.executionShape === "typed_child"
       ? { schemaVersion: 1, type: "materialized", at, stageId: action.stageId, batchId: action.batchId, executionId: "agent-1", canonicalTaskName: "/root/audit-core", status: "running" }
       : { schemaVersion: 1, type: "materialized", at, stageId: action.stageId, batchId: action.batchId, status: "running" };
     await runWorkflowNext({ envelope: envelope({ plan, event: materialized }), policy, capabilities, roleSpecs: ROLE_SPECS, cwd });

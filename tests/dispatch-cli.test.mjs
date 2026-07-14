@@ -347,9 +347,44 @@ test("workflow-next returns the managed public action without a raw plan goal", 
   assert.equal(result.code, 0, result.stdout);
   const value = jsonOnly(result);
   assert.equal(value.status, "GEARBOX_WORKFLOW_ACTION");
-  assert.equal(value.source, "managed");
-  assert.equal(value.public.kind, "root_inline");
+  assert.equal(value.stateSource, "managed");
+  assert.equal(value.action.kind, "root_inline");
   assert.doesNotMatch(result.stdout, /Audit two modules|workflow-ledger\.jsonl|\/private\//);
+});
+
+test("workflow-next retains a safe active typed spawn message and returns only upstream append records", async (t) => {
+  const { home, path } = await fixture(t, { policyMode: "active" });
+  const source = await mkdtemp(join(tmpdir(), "gearbox-workflow-active-"));
+  t.after(() => rm(source, { recursive: true, force: true }));
+  for (const directory of ["lib", "scripts", "tests"]) {
+    await mkdir(join(source, directory), { recursive: true });
+    await writeFile(join(source, directory, "fixture.txt"), "fixture\n");
+  }
+  const base = workflowPlan();
+  const plan = { ...base, stages: base.stages.map((stage) => ({ ...stage, parentPermission: "read-only" })) };
+  await writeFile(path, `${JSON.stringify(workflowEnvelope({
+    plan,
+    stateSource: { kind: "upstream", schemaFields: ["workflowId", "planHash", "stageId", "state", "attempt", "executionShape", "role", "taskHash", "resultHash", "adopted", "updatedAt"], records: [] },
+  }))}\n`, { mode: 0o600 });
+  const result = await run([
+    "workflow-next", "--packet", path,
+    "--agent-type-visible", "true",
+    "--isolated-runner-verified", "true",
+    "--runtime-metadata-available", "true",
+    "--permissions-enforced", "true",
+  ], { CODEX_HOME: home }, source);
+  assert.equal(result.code, 0, result.stdout);
+  const value = jsonOnly(result);
+  assert.equal(value.stateSource, "upstream");
+  assert.equal(value.action.kind, "typed_child");
+  assert.notEqual(value.action.spawnArgs.message, "[REDACTED]");
+  assert.match(value.action.spawnArgs.message, /Workflow stage/);
+  assert.doesNotMatch(result.stdout, /Audit two modules|fixture-manifest|\/private\//);
+  assert.ok(value.recordsToAppend.length > 0);
+  assert.deepEqual(value.outcomesToAppend, []);
+  assert.equal(JSON.stringify(value).includes("sentinel"), false);
+  await assert.rejects(access(join(source, "reports", "workflow-ledger.jsonl")));
+  await assert.rejects(access(join(source, "reports", "workflow-outcomes.jsonl")));
 });
 
 test("active policy requires its applied manifest before planning", async (t) => {

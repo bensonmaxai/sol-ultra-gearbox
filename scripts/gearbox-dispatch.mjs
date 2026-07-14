@@ -63,6 +63,18 @@ function output(value) {
   process.stdout.write(`${JSON.stringify(redactSensitive(value))}\n`);
 }
 
+function unsafeWorkflowOutput(value) {
+  const forbidden = /(?:\/(?:private|tmp|Users)\/|-----BEGIN |\b(?:api[_-]?key|authorization|bearer|token|secret|password)\b)/i;
+  if (typeof value === "string") return forbidden.test(value);
+  if (Array.isArray(value)) return value.some(unsafeWorkflowOutput);
+  return value && typeof value === "object" && Object.values(value).some(unsafeWorkflowOutput);
+}
+
+function outputWorkflow(value) {
+  if (unsafeWorkflowOutput(value)) throw new TypeError("workflow output contains unsafe content");
+  process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
 function stable(value) {
   if (Array.isArray(value)) return value.map(stable);
   if (value && typeof value === "object") {
@@ -327,14 +339,31 @@ async function main() {
       roleSpecs: ROLE_SPECS,
       cwd: process.cwd(),
     });
-    output({
+    const response = {
       status: result.status,
       mode: result.mode,
-      source: result.source,
+      stateSource: result.stateSource,
       rollbackRequired: result.rollbackRequired,
-      ...(result.public ? { public: result.public } : {}),
+      ...(result.action ? { action: result.action } : {}),
       ...(result.reasonCode ? { reasonCode: result.reasonCode } : {}),
-    });
+      ...(result.stateSource === "upstream" ? {
+        recordsToAppend: result.recordsToAppend,
+        outcomesToAppend: result.outcomesToAppend,
+      } : {}),
+    };
+    try {
+      outputWorkflow(response);
+    } catch {
+      outputWorkflow({
+        status: "GEARBOX_WORKFLOW_BLOCKED",
+        mode: result.mode,
+        stateSource: result.stateSource,
+        rollbackRequired: result.rollbackRequired,
+        reasonCode: "WORKFLOW_OUTPUT_UNSAFE",
+      });
+      process.exitCode = 1;
+      return;
+    }
     if (result.status === "GEARBOX_WORKFLOW_BLOCKED") process.exitCode = 1;
     return;
   }

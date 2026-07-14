@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -40,4 +40,14 @@ test("owned packets reject malformed JSON without consuming the packet", async (
   await writeFile(path, "not json\n", { mode: 0o600 });
   await assert.rejects(readOwnedPacket(path, { consume: true }), /must contain JSON/);
   assert.equal(await readFile(path, "utf8"), "not json\n");
+});
+
+test("owned packets reject a symlinked parent beneath the managed directory", async (t) => {
+  const { owned } = await fixture(t);
+  const physical = join(owned, "physical");
+  const linked = join(owned, "linked");
+  await mkdir(physical, { mode: 0o700 });
+  await writeFile(join(physical, "packet.json"), '{"packet":"valid"}\n', { mode: 0o600 });
+  await symlink(physical, linked);
+  await assert.rejects(readOwnedPacket(join(linked, "packet.json"), { consume: false }), /must not traverse symlinks/);
 });
