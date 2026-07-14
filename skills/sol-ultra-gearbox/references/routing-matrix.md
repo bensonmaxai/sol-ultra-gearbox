@@ -37,7 +37,7 @@ run `gearbox-dispatch plan`. The planner selects exactly one shape:
 |---|---|
 | `root_inline` | Any rejected gate, high-risk work, or writer permission mismatch. |
 | `typed_child` | Typed capability is visible and parent/role permissions match. |
-| `isolated_role_root` | Read-only Luna/Terra work passes all gates and the isolated runner is verified, but native `agent_type` is unavailable or parent permission cannot be inherited safely; this is an isolated root, never a child. |
+| `isolated_role_root` | Read-only Luna/Terra work passes all gates and the isolated runner is verified, but native `agent_type` is unavailable or parent permission cannot be inherited safely; the owner-approved `sol_skill_tester` writing-skills contract also uses this shape. It is always an isolated root, never a child. |
 | `typed_child_bridge` | Disabled in the first active release (`allowTypedBridge=false`); never infer availability. |
 
 `off` makes no automatic decision, `shadow` records a root-inline outcome, and
@@ -58,6 +58,11 @@ tokens because every child performs its own model and tool work.
 | `sol_reviewer` | Sol High | Focused requirement, diff, regression, security-boundary, and test-evidence review | Reimplementing the task or owning routine writes |
 | `terra_max_worker` | Terra Max | An explicitly requested exact role or an existing Max-profile workflow with a bounded scope | Automatic escalation, ordinary implementation, or a substitute for Sol risk ownership |
 | `terra_ultra_specialist` | Terra Ultra | Exceptional module-scale, self-contained work with an exclusive scope and safe rollback path | Nested delegation, irreversible decisions, or overlapping writes |
+
+`sol_skill_tester` is a separate isolated-only Sol High pressure-test role, not
+a normal typed work role. It exists only for owner-approved
+`superpowers:writing-skills` RED/GREEN evaluation and cannot be selected by the
+generic routing table.
 
 `terra_max_worker` and `terra_ultra_specialist` are opt-in side lanes, not
 automatic steps above `terra_worker`. Task shape, not the effort label alone,

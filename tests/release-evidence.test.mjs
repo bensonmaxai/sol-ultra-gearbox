@@ -57,6 +57,18 @@ function evidence(source = sourceManifest()) {
         passedRoleCount: 6,
         rootVerified: true,
         commit: "a".repeat(40),
+        writingSkillsAdapter: {
+          pass: true,
+          role: {
+            name: "sol_skill_tester",
+            model: "gpt-5.6-sol",
+            effort: "high",
+            sandbox: "read-only",
+          },
+          redRuns: 5,
+          greenRuns: 5,
+          evidenceSha256: "f".repeat(64),
+        },
       },
       sddAdapter: {
         status: "pass",
@@ -133,6 +145,22 @@ test("release evidence validates exact source and rendered Markdown", () => {
   assert.equal(result.pass, true);
   assert.equal(result.checks.acceptanceExam, true);
   assert.equal(result.checks.activeInstallation, true);
+  assert.match(markdown, /Writing-skills pressure test: PASS \(5 RED, 5 GREEN\)/);
+});
+
+test("release evidence rejects incomplete writing-skills pressure evidence", () => {
+  const current = sourceManifest();
+  const value = evidence(current);
+  value.runtime.roleSmoke.writingSkillsAdapter.greenRuns = 4;
+  const finalized = finalizeReleaseEvidence(value);
+  const markdown = renderReleaseEvidence(finalized);
+  const result = validateReleaseEvidence({
+    evidence: finalized,
+    markdown,
+    currentSource: current,
+  });
+  assert.equal(result.pass, false);
+  assert.equal(result.checks.writingSkillsAdapterPassed, false);
 });
 
 test("active installation summary accepts only privacy-safe Sol Max or Ultra evidence", () => {

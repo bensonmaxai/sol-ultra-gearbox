@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   SMOKE_REUSE_TTL_MS,
+  createWritingSkillsEvidenceBinding,
   createRuntimeBinding,
   validateSddAdapterEvidence,
   validateTrustedAcceptance,
   validateTrustedSmoke,
+  validateWritingSkillsAdapterEvidence,
 } from "../lib/runtime-evidence.mjs";
+import { REQUIRED_CHECKS } from "../lib/dispatch-evidence.mjs";
 
 const EXPECTED_ROLES = Object.freeze([
   {
@@ -40,6 +43,103 @@ function binding(overrides = {}) {
     },
     ...overrides,
   });
+}
+
+function writingSkillsTrial(phase, repetition, overrides = {}) {
+  const green = phase === "green";
+  return {
+    phase,
+    repetition,
+    startedAt: new Date(Date.parse("2026-07-13T04:00:00.000Z") + ((green ? 5 : 0) + repetition - 1) * 60_000).toISOString(),
+    completedAt: new Date(Date.parse("2026-07-13T04:00:30.000Z") + ((green ? 5 : 0) + repetition - 1) * 60_000).toISOString(),
+    targetSkillPresent: green,
+    expectedDecisionInTask: false,
+    expectedDecisionMatched: green,
+    decisionSha256: (green ? "4" : "5").repeat(64),
+    deliverableSha256: (green ? "a" : "b").repeat(64),
+    result: {
+      schemaVersion: 1,
+      kind: "dispatch_result",
+      pass: true,
+      taskHash: "1".repeat(64),
+      executionShape: "isolated_role_root",
+      role: "sol_skill_tester",
+      reasonCode: "DELEGATE_ISOLATED_SKILL_PRESSURE_TEST",
+      expected: {
+        model: "gpt-5.6-sol",
+        effort: "high",
+        sandbox: "read-only",
+        depth: 0,
+        roleHash: "2".repeat(64),
+      },
+      actual: {
+        model: "gpt-5.6-sol",
+        effort: "high",
+        sandbox: "read-only",
+        depth: 0,
+        parentTokens: 50,
+        childTokens: null,
+        nativeAgentRole: null,
+      },
+      checks: Object.fromEntries(REQUIRED_CHECKS.map((name) => [name, true])),
+      changedFiles: [],
+      retryCount: 0,
+      rollbackRequired: false,
+      synthetic: false,
+    },
+    ...overrides,
+  };
+}
+
+function writingSkillsReport(runtimeBinding = binding(), overrides = {}) {
+  const trials = ["red", "green"].flatMap((phase) =>
+    Array.from({ length: 5 }, (_, index) => writingSkillsTrial(phase, index + 1)),
+  );
+  const value = {
+    schemaVersion: 1,
+    kind: "writing_skills_adapter_contract",
+    generatedAt: "2026-07-13T04:10:01.000Z",
+    pass: true,
+    expectedRepetitionsPerPhase: 5,
+    role: {
+      name: "sol_skill_tester",
+      model: "gpt-5.6-sol",
+      effort: "high",
+      sandbox: "read-only",
+    },
+    taskContractSha256: "1".repeat(64),
+    targetSkillSha256: "3".repeat(64),
+    expectedDecisionSha256: "4".repeat(64),
+    runtimeBinding,
+    runtimeBindingAfterSha256: runtimeBinding.sha256,
+    runtimeBindingStable: true,
+    globalConfigBeforeSha256: runtimeBinding.configSha256,
+    globalConfigAfterSha256: runtimeBinding.configSha256,
+    globalConfigUnchanged: true,
+    trials,
+    sequenceChecks: {
+      exactRedThenGreenOrder: true,
+      sequential: true,
+      sameTaskContract: true,
+      sameModelAndEffort: true,
+      freshIsolatedContextPerTrial: true,
+      targetSkillOnlyInGreen: true,
+      expectedDecisionNeverInTask: true,
+      redControlUnaided: true,
+      greenTreatmentCompliant: true,
+    },
+    cleanup: { pass: true },
+    boundary: {
+      workflow: "superpowers:writing-skills",
+      verification: "red_green_pressure_test",
+      codexCoreHookTested: false,
+      execution: "sequential_fresh_isolated_roots",
+      rootOwnsComparison: true,
+    },
+    ...overrides,
+  };
+  value.evidenceSha256 = createWritingSkillsEvidenceBinding(value);
+  return value;
 }
 
 function report(runtimeBinding = binding(), overrides = {}) {
@@ -114,6 +214,7 @@ function report(runtimeBinding = binding(), overrides = {}) {
     runtimeBindingAfterSha256: runtimeBinding.sha256,
     runtimeBindingStable: true,
     roles,
+    writingSkillsAdapter: writingSkillsReport(runtimeBinding),
     ...overrides,
   };
 }
@@ -226,6 +327,7 @@ test("trusted smoke rejects tampering and incomplete runtime evidence", () => {
     report(current, { runtimeBindingStable: false }),
     report(current, { runtimeBindingAfterSha256: "0".repeat(64) }),
     report(current, { schemaVersion: 1 }),
+    report(current, { writingSkillsAdapter: null }),
   ];
   for (const candidate of cases) {
     assert.equal(
@@ -239,6 +341,75 @@ test("trusted smoke rejects tampering and incomplete runtime evidence", () => {
       false,
     );
   }
+});
+
+test("writing-skills evidence requires five fresh RED controls and five GREEN treatments", () => {
+  const current = binding();
+  const value = writingSkillsReport(current);
+  const valid = validateWritingSkillsAdapterEvidence(value);
+  assert.equal(valid.pass, true);
+
+  const cases = [
+    { trials: value.trials.slice(0, 9) },
+    {
+      trials: value.trials.map((trial, index) =>
+        index === 0 ? { ...trial, expectedDecisionMatched: true } : trial,
+      ),
+    },
+    {
+      trials: value.trials.map((trial, index) =>
+        index === 5 ? { ...trial, expectedDecisionMatched: false } : trial,
+      ),
+    },
+    {
+      trials: value.trials.map((trial, index) =>
+        index === 5 ? { ...trial, decisionSha256: "5".repeat(64) } : trial,
+      ),
+    },
+    {
+      trials: value.trials.map((trial, index) =>
+        index === 5 ? { ...trial, expectedDecisionInTask: true } : trial,
+      ),
+    },
+    {
+      trials: value.trials.map((trial, index) =>
+        index === 5
+          ? {
+              ...trial,
+              result: {
+                ...trial.result,
+                actual: { ...trial.result.actual, effort: "max" },
+              },
+            }
+          : trial,
+      ),
+    },
+    { globalConfigUnchanged: false },
+    { runtimeBindingStable: false },
+    { expectedDecisionSha256: null },
+  ];
+  for (const overrides of cases) {
+    const candidate = writingSkillsReport(current, overrides);
+    candidate.evidenceSha256 = createWritingSkillsEvidenceBinding(candidate);
+    assert.equal(validateWritingSkillsAdapterEvidence(candidate).pass, false);
+  }
+});
+
+test("trusted smoke binds the writing-skills evidence to the same runtime", () => {
+  const current = binding();
+  const other = binding({ gitHead: "9".repeat(40) });
+  const candidate = report(current, {
+    writingSkillsAdapter: writingSkillsReport(other),
+  });
+  const validation = validateTrustedSmoke({
+    report: candidate,
+    currentBinding: current,
+    expectedRoles: EXPECTED_ROLES,
+    expectedRoot: EXPECTED_ROOT,
+    nowMs: Date.parse("2026-07-13T04:10:00.000Z"),
+  });
+  assert.equal(validation.pass, false);
+  assert.equal(validation.checks.writingSkillsBindingMatchesSmoke, false);
 });
 
 test("trusted acceptance requires a current, complete, activation-eligible ten-question exam", () => {

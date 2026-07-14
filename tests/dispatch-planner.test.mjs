@@ -99,6 +99,66 @@ test("executing-plans is a known adapter for bounded delegated phases", () => {
   assert.equal(decision.reasonCode, "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH");
 });
 
+test("writing-skills uses only the owner-approved isolated Sol pressure tester", () => {
+  const value = packet({
+    workflowAdapter: "superpowers:writing-skills",
+    responsibility: "skill_testing",
+    requestedRole: "sol_skill_tester",
+    ownerOptIn: true,
+  });
+  const decision = plan(value);
+  assert.equal(decision.selectedShape, "isolated_role_root");
+  assert.equal(decision.effectiveShape, "isolated_role_root");
+  assert.equal(decision.role, "sol_skill_tester");
+  assert.equal(decision.reasonCode, "DELEGATE_ISOLATED_SKILL_PRESSURE_TEST");
+  assert.equal(decision.spawnArgs, null);
+  assert.equal(decision.requiresRuntimeEvidence, true);
+
+  const noNativeSchema = plan(value, {
+    capabilities: { ...CAPABILITIES, agentTypeVisible: false },
+  });
+  assert.equal(noNativeSchema.selectedShape, "isolated_role_root");
+  assert.equal(noNativeSchema.reasonCode, "DELEGATE_ISOLATED_SKILL_PRESSURE_TEST");
+});
+
+test("writing-skills pressure testing fails closed without exact approval and runner facts", () => {
+  const base = packet({
+    workflowAdapter: "superpowers:writing-skills",
+    responsibility: "skill_testing",
+    requestedRole: "sol_skill_tester",
+    ownerOptIn: true,
+  });
+  const cases = [
+    [packet({ ...base, ownerOptIn: false }), "ROOT_OWNER_APPROVAL_REQUIRED", CAPABILITIES],
+    [packet({ ...base, requestedRole: "sol_reviewer" }), "ROOT_SCOPE_AMBIGUOUS", CAPABILITIES],
+    [packet({ ...base, writeScope: ["SKILL.md"] }), "ROOT_SCOPE_AMBIGUOUS", CAPABILITIES],
+    [packet({ ...base, legacyAdapter: true }), "ROOT_SCOPE_AMBIGUOUS", CAPABILITIES],
+    [base, "ROOT_ISOLATED_RUNNER_UNAVAILABLE", { ...CAPABILITIES, isolatedRunnerVerified: false }],
+  ];
+  for (const [candidate, reasonCode, capabilities] of cases) {
+    const decision = plan(candidate, { capabilities });
+    assert.equal(decision.selectedShape, "root_inline");
+    assert.equal(decision.reasonCode, reasonCode);
+  }
+});
+
+test("isolated skill tester cannot be requested by generic or unrelated adapters", () => {
+  for (const workflowAdapter of [
+    "direct",
+    "superpowers:executing-plans",
+    "superpowers:subagent-driven-development",
+  ]) {
+    const decision = plan(packet({
+      workflowAdapter,
+      responsibility: "skill_testing",
+      requestedRole: "sol_skill_tester",
+      ownerOptIn: true,
+    }));
+    assert.equal(decision.selectedShape, "root_inline");
+    assert.equal(decision.reasonCode, "ROOT_SCOPE_AMBIGUOUS");
+  }
+});
+
 test("verified isolated reads do not require the native child schema", () => {
   const decision = plan(packet(), {
     capabilities: {

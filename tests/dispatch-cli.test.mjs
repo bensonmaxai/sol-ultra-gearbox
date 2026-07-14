@@ -171,7 +171,14 @@ async function fixture(t, { policy = true, policyMode = "shadow" } = {}) {
       await writeFile(manifestPath, `${JSON.stringify({
         schemaVersion: 1,
         status: "applied",
-        activation: { installId: "fixture", manifestPath, repositoryRoot: home, policySha256: JSON.parse(source).sha256, acceptanceBindingSha256: "a".repeat(64) },
+        activation: {
+          installId: "fixture",
+          manifestPath,
+          repositoryRoot: home,
+          policySha256: JSON.parse(source).sha256,
+          acceptanceBindingSha256: "a".repeat(64),
+          writingSkillsEvidenceSha256: "b".repeat(64),
+        },
         config: { path: configPath, mode: 0o600, afterSha256: configDigest },
         agents: { path: agentsPath, mode: 0o644, afterSha256: agentsDigest },
         staticChecks: { strictConfig: true, configLoad: true, mcpConfig: true, installation: true },
@@ -328,6 +335,7 @@ test("active policy requires its applied manifest before planning", async (t) =>
   for (const mutate of [
     (value) => { value.status = "applying"; },
     (value) => { value.activation.acceptanceBindingSha256 = "invalid"; },
+    (value) => { value.activation.writingSkillsEvidenceSha256 = "invalid"; },
     (value) => { value.files[0].mode = 0o644; },
     (value) => { value.files.push({ ...value.files[0] }); },
     (value) => { value.staticChecks.configLoad = false; },
@@ -450,4 +458,63 @@ test("active isolated execution materializes only allowed read scope and never r
   ], env, source);
   assert.equal(duplicate.code, 1);
   assert.deepEqual(jsonOnly(duplicate), { status: "GEARBOX_DISPATCH_OFF", mode: "off" });
+});
+
+test("active writing-skills execution uses only the isolated Sol tester route", async (t) => {
+  const { home, path } = await fixture(t, { policyMode: "active" });
+  const source = await mkdtemp(join(tmpdir(), "gearbox-writing-skills-source-"));
+  const log = join(home, "writing-skills-log.json");
+  t.after(() => rm(source, { recursive: true, force: true }));
+  await writeFile(join(source, "scenario.md"), "pressure scenario\n", "utf8");
+  await writeFile(join(source, "SKILL.md"), "target guidance\n", "utf8");
+  await writeFile(join(home, "auth.json"), "fixture auth\n", "utf8");
+  const fake = await fakeCodex(join(home, "fake-writing-skills-codex.mjs"));
+  const value = packet({
+    workflowAdapter: "superpowers:writing-skills",
+    responsibility: "skill_testing",
+    requestedRole: "sol_skill_tester",
+    ownerOptIn: true,
+    readScope: ["scenario.md", "SKILL.md"],
+  });
+  await writeFile(path, `${JSON.stringify(value)}\n`, { mode: 0o600 });
+  const capabilities = [
+    "--agent-type-visible", "true",
+    "--isolated-runner-verified", "true",
+    "--runtime-metadata-available", "true",
+    "--permissions-enforced", "true",
+  ];
+  const result = await run(
+    ["run-isolated", "--packet", path, ...capabilities],
+    {
+      CODEX_HOME: home,
+      CODEX_BIN: fake,
+      FAKE_CLI_LOG: log,
+      FAKE_CLI_ESCAPE: source,
+    },
+    source,
+  );
+  assert.equal(result.code, 0, result.stdout);
+  const output = jsonOnly(result);
+  assert.equal(output.status, "GEARBOX_DISPATCH_RESULT");
+  assert.equal(output.decision.role, "sol_skill_tester");
+  assert.equal(
+    output.decision.reasonCode,
+    "DELEGATE_ISOLATED_SKILL_PRESSURE_TEST",
+  );
+  assert.equal(output.result.actual.model, "gpt-5.6-sol");
+  assert.equal(output.result.actual.effort, "high");
+  assert.equal(output.result.actual.sandbox, "read-only");
+  assert.equal(output.result.actual.depth, 0);
+
+  await writeFile(path, `${JSON.stringify({
+    ...value,
+    workflowAdapter: "direct",
+  })}\n`, { mode: 0o600 });
+  const generic = jsonOnly(await run(
+    ["plan", "--packet", path, ...capabilities],
+    { CODEX_HOME: home },
+    source,
+  ));
+  assert.equal(generic.decision.selectedShape, "root_inline");
+  assert.equal(generic.decision.reasonCode, "ROOT_SCOPE_AMBIGUOUS");
 });

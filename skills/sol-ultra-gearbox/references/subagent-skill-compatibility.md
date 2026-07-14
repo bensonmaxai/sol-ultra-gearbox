@@ -57,6 +57,10 @@ gate but does not block a verified read-only isolated root.
 | Planned implementation or a bounded fixer | `terra_worker` | One exclusive write scope with clear tests |
 | Requirements, diff, regression, security-boundary, or test-evidence review | `sol_reviewer` | Read-only; no reimplementation |
 
+`sol_skill_tester` is deliberately absent from generic responsibility mapping.
+It is an isolated-only Sol High role available solely to the exact
+owner-approved `superpowers:writing-skills` adapter.
+
 `terra_max_worker` and `terra_ultra_specialist` remain explicit opt-in side
 lanes. A workflow skill cannot select them merely by asking for a stronger
 generic worker.
@@ -69,6 +73,7 @@ generic worker.
 | `superpowers:subagent-driven-development` | Sol root owns the plan and progress ledger. Dispatch a fresh `terra_worker` implementer or fixer. Use `sol_reviewer` only in a later parent phase whose permission mode matches read-only; otherwise the Sol root performs task review. Put the required TDD and test contract in the self-contained brief because child workflow plugins remain disabled. Writers remain sequential. Sol root integrates and performs final adjudication. | Do not pass the workflow's explicit model override. Never launch the read-only reviewer from a broader workspace-write parent. If permission switching, exclusive write scope, or a typed final review cannot be preserved, keep that phase on the Sol root. |
 | `superpowers:dispatching-parallel-agents` | Translate each independent responsibility to a typed role and run at most two direct children per batch. Prefer read-only evidence batches before a separate writer round. | Do not use generic agents, overlapping writers, shared mutable state, or nested dispatch. |
 | `superpowers:requesting-code-review` | Send exact requirements, diff, and existing test evidence to `sol_reviewer`. Route accepted fixes separately to one `terra_worker` or keep them on the Sol root. | The reviewer never edits, reimplements, or reruns the whole task without a concrete reason. |
+| `superpowers:writing-skills` | After explicit owner approval, use `sol_skill_tester` through the managed isolated runner. Run at least five RED controls and five GREEN treatments sequentially in fresh isolated contexts. Keep model, effort, and task identical; omit the target skill from RED, include it only in GREEN, keep the expected verdict out of the task, and let Sol root compare every structured result. | Never expose the tester as `agent_type`, inherit full Superpowers into it, run phases in parallel, allow writes or external side effects, skip the no-guidance control, or accept fewer than five repetitions per phase. |
 | `codex-security:security-scan` | Use `terra_explorer` for ranking and evidence collection, then `sol_reviewer` for bounded validation, attack-path, or security-boundary review. Run no more than two direct children per batch. Sol root owns finding decisions and write-ups. | No Terra child owns security decisions or writes security fixes. Unknown validation permissions, descendant agents, or more than two required concurrent workers fail closed. |
 | `codex-security:security-diff-scan` | Use the same security mapping, limited to the supplied diff and affected boundaries. | Sol root owns reportable findings, fixes, and final closure. |
 
@@ -115,6 +120,12 @@ sequential isolated root phases so each child receives the exact required
 sandbox. It proves typed runtime identity, handoff order, and filesystem scope;
 it does not prove that arbitrary third-party skill code is intercepted below
 the instruction layer.
+
+The `smoke:writing-skills` harness verifies ten fresh isolated roots: five RED
+controls without target guidance followed by five GREEN treatments with the
+target skill. It binds runtime model, effort, sandbox, token, filesystem,
+cleanup, task, role, config, commit, and runner evidence. It proves the managed
+adapter path and guidance uptake, not a universal Codex core hook.
 
 ## Active failure boundary
 

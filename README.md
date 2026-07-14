@@ -37,9 +37,13 @@ between Sol Ultra root orchestration and the Terra Ultra child profile.
 | `sol_reviewer` | `gpt-5.6-sol` | `high` | read-only | Requirements, diff, security boundary, and test review |
 | `terra_ultra_specialist` | `gpt-5.6-terra` | `ultra` | workspace-write | Exceptional module-scale, rollback-safe work |
 | `terra_max_worker` | `gpt-5.6-terra` | `max` | workspace-write | Explicitly requested or existing Max-profile workflows |
+| `sol_skill_tester` | `gpt-5.6-sol` | `high` | read-only isolated root | Fresh-context RED/GREEN workflow-skill pressure tests only |
 
 `terra_max_worker` is a supported opt-in compatibility role, but it is never an
 automatic route or the default upgrade from `terra_worker`.
+`sol_skill_tester` is installed for the managed isolated runner only. It is
+excluded from the typed child catalog and from `[agents.*]`, so generic
+`spawn_agent` routing cannot select it.
 
 ## Safety model
 
@@ -61,7 +65,8 @@ automatic route or the default upgrade from `terra_worker`.
   treat cleanup failure as a smoke failure.
 - Bind paid runtime evidence to a clean Git commit, global config hash, Codex
   version, every role hash, and the runner source hashes.
-- Stop after the first failed role. Do not retry a cost-bearing smoke test.
+- Stop after the first failed role or pressure-test repetition. Do not retry a
+  cost-bearing smoke test.
 - Back up and marker-manage every global write so rollback does not replace an
   unrelated complete config file.
 - Capture only the previous Gearbox-owned marker blocks and their bound hash.
@@ -95,7 +100,8 @@ compatibility gate that:
   using an untyped or parent-inherited child.
 
 Known adapters cover Superpowers executing plans, subagent-driven development,
-parallel dispatch, code review, and Codex Security repository or diff scans. Exact
+parallel dispatch, code review, writing-skills RED/GREEN pressure testing, and
+Codex Security repository or diff scans. Exact
 behavior, conflict handling, and unsupported workflow fallbacks are documented
 in the
 [subagent skill compatibility matrix](skills/sol-ultra-gearbox/references/subagent-skill-compatibility.md).
@@ -127,7 +133,7 @@ The possible shapes are:
 |---|---|
 | `root_inline` | Sol completes the work after a failed gate or unsafe permission shape. |
 | `typed_child` | Sol calls the exact typed `spawn_agent` arguments only when permissions match. |
-| `isolated_role_root` | Luna/Terra read-only work in a verified separate root when native `agent_type` is unavailable or parent permission would not match. It is never a child. |
+| `isolated_role_root` | Luna/Terra read-only work in a verified separate root when native `agent_type` is unavailable or parent permission would not match, plus owner-approved `sol_skill_tester` RED/GREEN runs. It is never a child. |
 | `typed_child_bridge` | Disabled for first activation with `allowTypedBridge=false`. |
 
 Unknown skills, generic roles, no verified native-or-isolated execution
@@ -223,11 +229,20 @@ The following command launches real model-backed probes and consumes credits:
 npm run smoke
 ```
 
-Run it only with explicit owner approval. A pass requires all six roles to
+Run it only with explicit owner approval. A pass requires all six typed roles to
 match their expected role, model, effort, sandbox, depth, parent and child token
 metadata, marker, filesystem scope, no-descendant policy, and temporary-artifact
-cleanup. Raw reports are written under `reports/` and intentionally ignored by
-Git.
+cleanup. It also requires five fresh RED controls and five fresh GREEN
+treatments through isolated `sol_skill_tester` roots with an identical task,
+model, and effort; only GREEN receives the target skill and the expected verdict
+may not appear in the task. Raw reports are written under `reports/` and
+intentionally ignored by Git.
+
+The writing-skills contract can also be run by itself after owner approval:
+
+```bash
+npm run smoke:writing-skills
+```
 
 The disposable SDD adapter contract is a separate paid probe:
 

@@ -46,6 +46,9 @@ test("bundled skill documents Sol Max and the Terra Max opt-in role", async () =
   assert.match(source, /Never select it automatically/);
   assert.match(source, /references\/routing-matrix\.md/);
   assert.match(source, /references\/subagent-skill-compatibility\.md/);
+  assert.match(source, /superpowers:writing-skills/);
+  assert.match(source, /sol_skill_tester/);
+  assert.match(source, /five.*RED.*five.*GREEN|5.*RED.*5.*GREEN/i);
 });
 
 test("managed policy and bundled skill publish the quality-first dispatch contract", async () => {
