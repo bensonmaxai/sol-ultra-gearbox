@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-14T04:15:07.318Z",
+  "generatedAt": "2026-07-14T11:44:17.311Z",
   "source": {
     "algorithm": "sha256",
-    "fileCount": 58,
-    "sha256": "dc59d475e03c8c8ebd5e68ed1018f33ea101ea6670e67a8b7b0bb151adb6e636",
-    "commit": "e4164b3bf06d3e8a800d2664f3164e87e7d5e958"
+    "fileCount": 59,
+    "sha256": "f23e0ed833be9e2d9b5b6c8ec73d35e93d4927a90985f97aaef82b45cb5d4b1d",
+    "commit": "d00d68e236dc12a5f62be54c982f547b59fc4528"
   },
   "tests": {
     "status": "pass",
     "command": "node --test --test-reporter=tap",
-    "total": 134,
-    "passed": 134,
+    "total": 143,
+    "passed": 143,
     "failed": 0
   },
   "runtime": {
@@ -20,10 +20,10 @@
       "mode": "active",
       "integrity": "pass",
       "allowTypedBridge": false,
-      "installId": "gearbox-20260714041324",
-      "policySha256": "9892e7416cdafd4d59158de1bbac9ac97a7955934699fda92675613da5184303",
-      "preInstallConfigSha256": "5ccfcec350d89400619808a7d7613bcec73810e48bd205756bdd66cf18bfb13f",
-      "activeConfigSha256": "5ccfcec350d89400619808a7d7613bcec73810e48bd205756bdd66cf18bfb13f",
+      "installId": "gearbox-20260714114125",
+      "policySha256": "89841adaee1466df854402ecd957b3a36f808cba167f51d584fa3f207048cf19",
+      "preInstallConfigSha256": "1bd5662de4b1697b4de40083a5220868e6838e2a0b742d7c11854cee2f3d8512",
+      "activeConfigSha256": "1bd5662de4b1697b4de40083a5220868e6838e2a0b742d7c11854cee2f3d8512",
       "root": {
         "persisted": true,
         "model": "gpt-5.6-sol",
@@ -32,21 +32,33 @@
     },
     "roleSmoke": {
       "status": "pass",
-      "generatedAt": "2026-07-14T04:11:04.007Z",
+      "generatedAt": "2026-07-14T11:37:05.005Z",
       "expectedRoleCount": 6,
       "passedRoleCount": 6,
       "rootVerified": true,
-      "commit": "e4164b3bf06d3e8a800d2664f3164e87e7d5e958",
-      "validatedAtCommit": "e4164b3bf06d3e8a800d2664f3164e87e7d5e958",
-      "runtimeBindingSha256": "b5c8926c9450ea9fa5cea540c70e66fdd85972c624c733c68dc1012144b5a6fe",
+      "commit": "d00d68e236dc12a5f62be54c982f547b59fc4528",
+      "validatedAtCommit": "d00d68e236dc12a5f62be54c982f547b59fc4528",
+      "runtimeBindingSha256": "21221c7317bbf4ab4e551bac35fa5700e8136d10d211562dc3e40146a00d8dc1",
+      "writingSkillsAdapter": {
+        "pass": true,
+        "role": {
+          "name": "sol_skill_tester",
+          "model": "gpt-5.6-sol",
+          "effort": "high",
+          "sandbox": "read-only"
+        },
+        "redRuns": 5,
+        "greenRuns": 5,
+        "evidenceSha256": "7a6126a570718cb836573d89e3627fad5406c94e082877d6a509fa6b503918c5"
+      },
       "roles": [
         {
           "role": "luna_clerk",
           "model": "gpt-5.6-luna",
           "effort": "low",
           "sandbox": "read-only",
-          "parentTokens": 40017,
-          "childTokens": 26462,
+          "parentTokens": 39979,
+          "childTokens": 26537,
           "pass": true
         },
         {
@@ -54,8 +66,8 @@
           "model": "gpt-5.6-terra",
           "effort": "medium",
           "sandbox": "read-only",
-          "parentTokens": 39919,
-          "childTokens": 26470,
+          "parentTokens": 39956,
+          "childTokens": 26439,
           "pass": true
         },
         {
@@ -63,8 +75,8 @@
           "model": "gpt-5.6-terra",
           "effort": "high",
           "sandbox": "workspace-write",
-          "parentTokens": 40992,
-          "childTokens": 69404,
+          "parentTokens": 40930,
+          "childTokens": 70918,
           "pass": true
         },
         {
@@ -72,8 +84,8 @@
           "model": "gpt-5.6-sol",
           "effort": "high",
           "sandbox": "read-only",
-          "parentTokens": 40156,
-          "childTokens": 40549,
+          "parentTokens": 40529,
+          "childTokens": 40446,
           "pass": true
         },
         {
@@ -81,8 +93,8 @@
           "model": "gpt-5.6-terra",
           "effort": "ultra",
           "sandbox": "workspace-write",
-          "parentTokens": 41059,
-          "childTokens": 41460,
+          "parentTokens": 41062,
+          "childTokens": 27483,
           "pass": true
         },
         {
@@ -90,28 +102,28 @@
           "model": "gpt-5.6-terra",
           "effort": "max",
           "sandbox": "workspace-write",
-          "parentTokens": 41020,
-          "childTokens": 57742,
+          "parentTokens": 41447,
+          "childTokens": 57120,
           "pass": true
         }
       ]
     },
     "sddAdapter": {
       "status": "pass",
-      "generatedAt": "2026-07-14T04:14:50.964Z",
+      "generatedAt": "2026-07-14T11:38:22.163Z",
       "phases": [
         "terra_worker",
         "sol_reviewer"
       ],
       "permissionStrategy": "sequential_isolated_roots",
       "verification": "adapter_contract",
-      "commit": "e4164b3bf06d3e8a800d2664f3164e87e7d5e958",
-      "validatedAtCommit": "e4164b3bf06d3e8a800d2664f3164e87e7d5e958",
-      "runtimeBindingSha256": "b5c8926c9450ea9fa5cea540c70e66fdd85972c624c733c68dc1012144b5a6fe"
+      "commit": "d00d68e236dc12a5f62be54c982f547b59fc4528",
+      "validatedAtCommit": "d00d68e236dc12a5f62be54c982f547b59fc4528",
+      "runtimeBindingSha256": "21221c7317bbf4ab4e551bac35fa5700e8136d10d211562dc3e40146a00d8dc1"
     },
     "acceptanceExam": {
       "pass": true,
-      "generatedAt": "2026-07-14T04:13:24.508Z",
+      "generatedAt": "2026-07-14T11:41:25.627Z",
       "questionCount": 10,
       "passedQuestionCount": 10,
       "executionShapes": [
@@ -120,7 +132,7 @@
         "typed_child"
       ],
       "activeEligible": true,
-      "runtimeBindingSha256": "b5c8926c9450ea9fa5cea540c70e66fdd85972c624c733c68dc1012144b5a6fe"
+      "runtimeBindingSha256": "21221c7317bbf4ab4e551bac35fa5700e8136d10d211562dc3e40146a00d8dc1"
     }
   },
   "costEvidence": {
@@ -200,5 +212,5 @@
     "coreRuntimeHook": "out_of_scope",
     "costEstimator": "gated_until_10_complete_pairs"
   },
-  "renderedMarkdownSha256": "aabef3ec755f9d8fcb94acc6991456d0060bed7473503244a3a8c8a8ce369d76"
+  "renderedMarkdownSha256": "468e98e929a7d3d47e4e9a376e7f55637d50d4425049906fdd8a82c3c45de59e"
 }
