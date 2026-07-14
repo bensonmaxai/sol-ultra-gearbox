@@ -7,6 +7,9 @@ import {
   renderTaskMessage,
   validateTaskPacket,
 } from "../lib/dispatch-planner.mjs";
+import { compileStagePacket } from "../lib/workflow-compiler.mjs";
+import { hashWorkflowPlan } from "../lib/workflow-plan.mjs";
+import { workflowPlan } from "./helpers/workflow-fixtures.mjs";
 
 function packet(overrides = {}) {
   return {
@@ -412,4 +415,24 @@ test("batch and permission safety gates remain root-inline", () => {
     assert.equal(decision.effectiveShape, "root_inline");
     assert.equal(decision.reasonCode, reasonCode);
   }
+});
+
+test("planner accepts a valid packet v2 without changing its routing decision", () => {
+  const workflow = workflowPlan({ workflowAdapter: "direct" });
+  workflow.stages[2] = {
+    ...workflow.stages[2],
+    responsibility: "exploration",
+    requestedRole: null,
+  };
+  const packetV2 = compileStagePacket({
+    plan: workflow,
+    planHash: hashWorkflowPlan(workflow),
+    stageId: "verify-evidence",
+    approvalFacts: [],
+    batch: { requestedChildren: 1, writerCount: 0, scopesDisjoint: true },
+  });
+  const decision = plan(packetV2);
+  assert.equal(decision.role, "terra_explorer");
+  assert.equal(decision.selectedShape, "isolated_role_root");
+  assert.equal(decision.reasonCode, "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH");
 });
