@@ -30,6 +30,20 @@ Gearbox doctor after a Codex update or account change.
 | High-risk, ambiguous, or hard to roll back | Sol Max root | Readers may collect evidence; Sol owns decisions and writes |
 | At least two independent workstreams | Sol Ultra root | Typed children with non-overlapping deliverables |
 
+After a self-contained packet passes the quality gate before the cost gate,
+run `gearbox-dispatch plan`. The planner selects exactly one shape:
+
+| Shape | When it is allowed |
+|---|---|
+| `root_inline` | Any rejected gate, high-risk work, or writer permission mismatch. |
+| `typed_child` | Typed capability is visible and parent/role permissions match. |
+| `isolated_role_root` | Read-only Luna/Terra work passes all gates but cannot safely inherit parent permission; this is an isolated root, never a child. |
+| `typed_child_bridge` | Disabled in the first active release (`allowTypedBridge=false`); never infer availability. |
+
+`off` makes no automatic decision, `shadow` records a root-inline outcome, and
+`active` may execute only the validated decision. Unknown workflow skills and
+unsupported direct core calls are not bridged by this matrix; keep them on Sol.
+
 Max and Ultra solve different problems. Max spends more reasoning on one task.
 Ultra is for meaningful parallel decomposition and usually consumes more total
 tokens because every child performs its own model and tool work.

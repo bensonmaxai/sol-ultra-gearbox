@@ -1,26 +1,41 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  ACTIVE_ROOT_EFFORTS,
   AGENTS_MARKER,
   CONFIG_LEGACY_THREADS_MARKER,
   CONFIG_ROLES_MARKER,
   CONFIG_V2_MARKER,
+  MAX_DIRECT_CHILDREN,
+  MULTI_AGENT_SESSION_THREADS,
   ROLE_SPECS,
   WORKFLOW_POLICY,
+  atomicWrite,
+  captureConfigRollbackState,
   cleanupProbeArtifacts,
+  DISPATCH_RUNTIME_FILES,
+  RUNTIME_BINDING_FILES,
+  installDispatchRuntime,
+  rollbackDispatchRuntime,
   redactSensitive,
   removeOwnedSmokeProjectEntries,
   renderAgentsMd,
   renderConfig,
   rollbackConfig,
+  restoreConfigRollbackState,
+  sha256,
+  summarizeRollout,
   validateTypedSpawnArgs,
+  validatePostInstallRootRuntime,
   validateRoleText,
   verifyProbe,
+  writeJson,
 } from "../lib/gearbox.mjs";
+import { createDispatchPolicy, serializeDispatchPolicy } from "../lib/dispatch-policy.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -44,6 +59,24 @@ command = "example"
 secret_value = "SECRET_KEEP"
 `;
 
+async function treeState(root) {
+  const entries = {};
+  async function visit(path) {
+    const metadata = await lstat(path);
+    const relativePath = path === root ? "." : path.slice(root.length + 1);
+    entries[relativePath] = {
+      type: metadata.isDirectory() ? "directory" : metadata.isFile() ? "file" : "other",
+      mode: metadata.mode & 0o777,
+      sha256: metadata.isFile() ? sha256(await readFile(path)) : null,
+    };
+    if (metadata.isDirectory()) {
+      for (const entry of (await readdir(path)).sort()) await visit(join(path, entry));
+    }
+  }
+  await visit(root);
+  return entries;
+}
+
 test("renderConfig adds only marker-delimited role and v2 blocks", () => {
   const output = renderConfig(CONFIG_FIXTURE, "/home/test/.codex");
   assert.match(output, new RegExp(CONFIG_ROLES_MARKER));
@@ -51,7 +84,9 @@ test("renderConfig adds only marker-delimited role and v2 blocks", () => {
   assert.match(output, /^\[agents\.luna_clerk\]$/m);
   assert.match(output, /^\[agents\.terra_worker\]$/m);
   assert.match(output, /^\[features\.multi_agent_v2\]$/m);
-  assert.match(output, /^max_concurrent_threads_per_session = 2$/m);
+  assert.equal(MAX_DIRECT_CHILDREN, 2);
+  assert.equal(MULTI_AGENT_SESSION_THREADS, MAX_DIRECT_CHILDREN + 1);
+  assert.match(output, /^max_concurrent_threads_per_session = 3$/m);
   assert.match(output, /^tool_namespace = "agents"$/m);
   assert.match(output, new RegExp(CONFIG_LEGACY_THREADS_MARKER));
   assert.doesNotMatch(output, /^max_threads\s*=/m);
@@ -77,6 +112,92 @@ test("rollbackConfig removes only Gearbox-managed config", () => {
   assert.doesNotMatch(rolledBack, new RegExp(CONFIG_ROLES_MARKER));
   assert.doesNotMatch(rolledBack, new RegExp(CONFIG_V2_MARKER));
   assert.doesNotMatch(rolledBack, new RegExp(CONFIG_LEGACY_THREADS_MARKER));
+});
+
+test("managed rollback state restores a previous Gearbox config byte for byte", () => {
+  const previous = renderConfig(CONFIG_FIXTURE, "/home/test/.codex")
+    .replace(
+      "max_concurrent_threads_per_session = 3",
+      "max_concurrent_threads_per_session = 2",
+    );
+  const rollbackState = captureConfigRollbackState(previous);
+  assert.doesNotMatch(JSON.stringify(rollbackState), /SECRET_KEEP/);
+  const installed = renderConfig(previous, "/home/test/.codex");
+  const restored = restoreConfigRollbackState(installed, {
+    rollbackState,
+    expectedSha256: sha256(previous),
+    codexHome: "/home/test/.codex",
+  });
+  assert.equal(restored.strategy, "managed_state");
+  assert.equal(restored.source, previous);
+});
+
+test("forced managed rollback preserves unrelated post-install config drift", () => {
+  const rollbackState = captureConfigRollbackState(CONFIG_FIXTURE);
+  const installed = renderConfig(CONFIG_FIXTURE, "/home/test/.codex");
+  const drifted = `${installed.trimEnd()}\n\n[unrelated]\nkeep = true\n`;
+  const restored = restoreConfigRollbackState(drifted, {
+    rollbackState,
+    expectedSha256: sha256(CONFIG_FIXTURE),
+    codexHome: "/home/test/.codex",
+    allowHashMismatch: true,
+  });
+  assert.equal(restored.strategy, "managed_state");
+  assert.equal(restored.exact, false);
+  assert.match(restored.source, /^\[unrelated\]$/m);
+  assert.match(restored.source, /^keep = true$/m);
+  assert.match(restored.source, /SECRET_KEEP/);
+  assert.doesNotMatch(restored.source, new RegExp(CONFIG_V2_MARKER));
+});
+
+test("legacy failed rollback reconstructs the previous two-slot managed config by hash", () => {
+  const previous = renderConfig(CONFIG_FIXTURE, "/home/test/.codex")
+    .replace(
+      "max_concurrent_threads_per_session = 3",
+      "max_concurrent_threads_per_session = 2",
+    );
+  const stripped = rollbackConfig(renderConfig(previous, "/home/test/.codex"));
+  const restored = restoreConfigRollbackState(stripped, {
+    rollbackState: null,
+    expectedSha256: sha256(previous),
+    codexHome: "/home/test/.codex",
+  });
+  assert.equal(restored.strategy, "legacy_v2_hash_match");
+  assert.equal(restored.source, previous);
+  assert.throws(
+    () => restoreConfigRollbackState(stripped, {
+      rollbackState: null,
+      expectedSha256: "0".repeat(64),
+      codexHome: "/home/test/.codex",
+    }),
+    /expected pre-install config hash/,
+  );
+});
+
+test("post-install root runtime accepts persisted Sol Max or Ultra only in active mode", () => {
+  assert.deepEqual(ACTIVE_ROOT_EFFORTS, ["max", "ultra"]);
+  for (const effort of ACTIVE_ROOT_EFFORTS) {
+    assert.equal(validatePostInstallRootRuntime({
+      persisted: true,
+      model: "gpt-5.6-sol",
+      effort,
+    }, { active: true }).pass, true);
+  }
+  assert.equal(validatePostInstallRootRuntime({
+    persisted: true,
+    model: "gpt-5.6-sol",
+    effort: "high",
+  }, { active: true }).pass, false);
+  assert.equal(validatePostInstallRootRuntime({
+    persisted: true,
+    model: "gpt-5.6-terra",
+    effort: "ultra",
+  }, { active: true }).pass, false);
+  assert.equal(validatePostInstallRootRuntime({
+    persisted: false,
+    model: "gpt-5.6-sol",
+    effort: "ultra",
+  }, { active: true }).pass, false);
 });
 
 test("renderConfig refuses an unmanaged multi_agent_v2 table", () => {
@@ -219,6 +340,127 @@ test("all six published roles participate in live smoke", () => {
   );
 });
 
+test("managed dispatch runtime is bound into the installer and packaged with the exact wrapper", async () => {
+  const installer = await readFile(join(REPO_ROOT, "scripts", "gearbox.mjs"), "utf8");
+  const wrapper = await readFile(join(REPO_ROOT, "scripts", "gearbox-dispatch"), "utf8");
+  const wrapperMode = (await stat(join(REPO_ROOT, "scripts", "gearbox-dispatch"))).mode & 0o777;
+  assert.match(installer, /DISPATCH_RUNTIME_FILES/);
+  assert.match(installer, /scripts\/gearbox-dispatch/);
+  assert.match(installer, /dispatchMode/);
+  assert.equal(wrapperMode, 0o755);
+  assert.equal(
+    wrapper,
+    "#!/usr/bin/env bash\nset -euo pipefail\nCODEX_HOME_DIR=\"${CODEX_HOME:-${HOME}/.codex}\"\nexec node \"$CODEX_HOME_DIR/gearbox/runtime/scripts/gearbox-dispatch.mjs\" \"$@\"\n",
+  );
+});
+
+test("all runtime evidence collectors use the one exact unique source inventory", async () => {
+  assert.deepEqual(RUNTIME_BINDING_FILES, [
+    "lib/gearbox.mjs",
+    "lib/runtime-evidence.mjs",
+    "lib/acceptance-exam.mjs",
+    "scripts/gearbox.mjs",
+    "scripts/codex-typed-agent",
+    ...DISPATCH_RUNTIME_FILES,
+    "scripts/gearbox-dispatch",
+  ].filter((path, index, paths) => paths.indexOf(path) === index));
+  const [gearboxScript, releaseEvidenceScript] = await Promise.all([
+    readFile(join(REPO_ROOT, "scripts", "gearbox.mjs"), "utf8"),
+    readFile(join(REPO_ROOT, "scripts", "release-evidence.mjs"), "utf8"),
+  ]);
+  for (const source of [gearboxScript, releaseEvidenceScript]) {
+    assert.match(source, /RUNTIME_BINDING_FILES/);
+    assert.doesNotMatch(source, /const RUNTIME_BINDING_PATHS/);
+  }
+});
+
+test("dispatch runtime install reads back exact targets and rollback restores a temporary CODEX_HOME", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "gearbox-dispatch-install-"));
+  const backups = await mkdtemp(join(tmpdir(), "gearbox-dispatch-backups-"));
+  t.after(() => Promise.all([rm(home, { recursive: true, force: true }), rm(backups, { recursive: true, force: true })]));
+  const policy = serializeDispatchPolicy(createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null }));
+  await mkdir(join(home, "gearbox", "runtime", "lib"), { recursive: true, mode: 0o700 });
+  await mkdir(join(home, "bin"), { recursive: true, mode: 0o700 });
+  await writeFile(join(home, "gearbox", "dispatch-policy.json"), policy, { mode: 0o640 });
+  await writeFile(join(home, "gearbox", "runtime", "lib", "dispatch-planner.mjs"), "old runtime\n", { mode: 0o640 });
+  await writeFile(join(home, "bin", "gearbox-dispatch"), "old wrapper\n", { mode: 0o700 });
+  const before = await treeState(home);
+  const manifest = await installDispatchRuntime({
+    sourceRoot: REPO_ROOT,
+    codexHome: home,
+    backupDirectory: backups,
+    dispatchMode: "shadow",
+  });
+  assert.equal(manifest.policyMode, "shadow");
+  assert.equal(manifest.files.length, DISPATCH_RUNTIME_FILES.length + 2);
+  for (const entry of manifest.files) {
+    const metadata = await stat(entry.targetPath);
+    assert.equal(metadata.mode & 0o777, entry.mode);
+    assert.equal(sha256(await readFile(entry.targetPath)), entry.targetSha256);
+    assert.equal(entry.sourceSha256, entry.targetSha256);
+  }
+  const runtime = manifest.files.filter((entry) => entry.kind === "dispatch-runtime");
+  assert.equal(runtime.length, DISPATCH_RUNTIME_FILES.length);
+  assert.ok(runtime.every((entry) => entry.mode === 0o644));
+  assert.equal(manifest.files.find((entry) => entry.kind === "dispatch-wrapper").mode, 0o755);
+  assert.equal(manifest.files.find((entry) => entry.kind === "dispatch-policy").mode, 0o600);
+
+  await chmod(runtime[0].targetPath, 0o600);
+  await assert.rejects(rollbackDispatchRuntime({ manifest }), /mode drift/);
+  await chmod(runtime[0].targetPath, 0o644);
+  await writeFile(runtime[0].targetPath, "content drift\n");
+  await assert.rejects(rollbackDispatchRuntime({ manifest }), /content drift/);
+  await rollbackDispatchRuntime({ manifest, force: true });
+  assert.deepEqual(await treeState(home), before);
+});
+
+test("dispatch runtime install rolls back every target after a mid-write failure", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "gearbox-dispatch-transaction-"));
+  const backups = await mkdtemp(join(tmpdir(), "gearbox-dispatch-transaction-backups-"));
+  t.after(() => Promise.all([
+    rm(home, { recursive: true, force: true }),
+    rm(backups, { recursive: true, force: true }),
+  ]));
+  const before = await treeState(home);
+  let writes = 0;
+  await assert.rejects(
+    installDispatchRuntime({
+      sourceRoot: REPO_ROOT,
+      codexHome: home,
+      backupDirectory: backups,
+      dispatchMode: "shadow",
+      writeTarget: async (...args) => {
+        writes += 1;
+        if (writes === 2) throw new Error("synthetic dispatch write failure");
+        return atomicWrite(...args);
+      },
+    }),
+    /synthetic dispatch write failure/,
+  );
+  assert.equal(writes, 2);
+  assert.deepEqual(await treeState(home), before);
+});
+
+test("active dispatch install requires a hash-bound activation policy and remains rollback-safe", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "gearbox-dispatch-active-"));
+  const backups = await mkdtemp(join(tmpdir(), "gearbox-dispatch-active-backups-"));
+  t.after(() => Promise.all([rm(home, { recursive: true, force: true }), rm(backups, { recursive: true, force: true })]));
+  const activation = { installId: "install-test", manifestPath: "/private/tmp/active-manifest.json" };
+  const policy = createDispatchPolicy({ mode: "active", allowTypedBridge: false, activation });
+  const manifest = await installDispatchRuntime({
+    sourceRoot: REPO_ROOT,
+    codexHome: home,
+    backupDirectory: backups,
+    dispatchMode: "active",
+    dispatchPolicy: policy,
+  });
+  assert.equal(manifest.policyMode, "active");
+  const installed = JSON.parse(await readFile(join(home, "gearbox", "dispatch-policy.json"), "utf8"));
+  assert.deepEqual(installed.activation, activation);
+  assert.equal(installed.allowTypedBridge, false);
+  await rollbackDispatchRuntime({ manifest, force: true });
+});
+
 test("redactSensitive removes sensitive payloads but retains usage counts", () => {
   const output = redactSensitive({
     token: "SECRET_TOKEN",
@@ -236,14 +478,55 @@ test("redactSensitive removes sensitive payloads but retains usage counts", () =
   assert.doesNotMatch(JSON.stringify(output), /SECRET_/);
 });
 
+test("rollout summary keeps session correlation in memory but writeJson removes raw rollout content", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "gearbox-rollout-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const rollout = join(directory, "rollout.jsonl");
+  const report = join(directory, "report.json");
+  await writeFile(
+    rollout,
+    [
+      JSON.stringify({
+        type: "session_meta",
+        payload: { id: "session-secret", thread_source: "root" },
+      }),
+      JSON.stringify({
+        type: "turn_context",
+        payload: { model: "gpt-5.6-terra", prompt: "raw prompt" },
+      }),
+      JSON.stringify({
+        type: "event_msg",
+        payload: { type: "agent_message", message: "raw rollout content" },
+      }),
+      JSON.stringify({
+        type: "event_msg",
+        payload: { type: "token_count", info: { total_token_usage: { total_tokens: 7 } } },
+      }),
+    ].join("\n"),
+    "utf8",
+  );
+  const summary = await summarizeRollout(rollout);
+  assert.equal(summary.threadSource, "root");
+  assert.equal(summary.sessionId, "session-secret");
+  await writeJson(report, summary);
+  const persisted = await readFile(report, "utf8");
+  assert.doesNotMatch(persisted, /session-secret|raw prompt|raw rollout content/);
+  assert.match(persisted, /total_tokens/);
+});
+
 test("cleanupProbeArtifacts removes only owned temporary directories", async (t) => {
   const owned = await Promise.all([
     mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-luna_clerk-")),
     mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-terra_max_worker-")),
     mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-sdd-")),
+    mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-luna_clerk-")),
+    mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-home-terra_explorer-")),
   ]);
-  const unrelated = await mkdtemp(join(tmpdir(), "unrelated-probe-"));
-  t.after(() => rm(unrelated, { recursive: true, force: true }));
+  const unrelated = await Promise.all([
+    mkdtemp(join(tmpdir(), "unrelated-probe-")),
+    mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-terra_worker-")),
+  ]);
+  t.after(() => Promise.all(unrelated.map((path) => rm(path, { recursive: true, force: true }))));
   await Promise.all(
     owned.map((path) =>
       writeFile(join(path, "evidence.txt"), "temporary\n", "utf8"),
@@ -251,13 +534,18 @@ test("cleanupProbeArtifacts removes only owned temporary directories", async (t)
   );
 
   const result = await cleanupProbeArtifacts(owned);
-  assert.equal(result.removed.length, 3);
+  assert.equal(result.removed.length, 5);
   for (const path of owned) await assert.rejects(stat(path), /ENOENT/);
   await assert.rejects(
-    cleanupProbeArtifacts([unrelated]),
+    cleanupProbeArtifacts([unrelated[0]]),
     /Refusing to remove non-Gearbox probe path/,
   );
-  assert.equal((await stat(unrelated)).isDirectory(), true);
+  await assert.rejects(
+    cleanupProbeArtifacts([unrelated[1]]),
+    /Refusing to remove non-Gearbox probe path/,
+  );
+  assert.equal((await stat(unrelated[0])).isDirectory(), true);
+  assert.equal((await stat(unrelated[1])).isDirectory(), true);
 });
 
 test("verifyProbe requires typed lineage, exact runtime settings, and no descendants", () => {

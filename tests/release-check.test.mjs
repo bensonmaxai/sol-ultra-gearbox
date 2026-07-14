@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { scanText } from "../lib/release-check.mjs";
+import { WORKFLOW_POLICY } from "../lib/gearbox.mjs";
+import { REQUIRED_RELEASE_FILES, scanText } from "../lib/release-check.mjs";
 
 const BUNDLED_SKILL = fileURLToPath(
   new URL("../skills/sol-ultra-gearbox/SKILL.md", import.meta.url),
+);
+const DISPATCH_LEDGER_TEST = fileURLToPath(
+  new URL("../tests/dispatch-ledger.test.mjs", import.meta.url),
 );
 
 test("release scanner accepts ordinary public text", () => {
@@ -15,6 +19,19 @@ test("release scanner accepts ordinary public text", () => {
 test("release scanner detects a private home path", () => {
   const value = "/" + "Users/private-owner/project";
   assert.match(scanText("file.txt", value)[0], /private macOS home path/);
+});
+
+test("release candidate requirements include the quality-first dispatch reference", () => {
+  assert.ok(
+    REQUIRED_RELEASE_FILES.includes(
+      "skills/sol-ultra-gearbox/references/quality-first-dispatch.md",
+    ),
+  );
+});
+
+test("dispatch-ledger fixture constructs its private path without embedding it in release text", async () => {
+  const source = await readFile(DISPATCH_LEDGER_TEST, "utf8");
+  assert.deepEqual(scanText("tests/dispatch-ledger.test.mjs", source), []);
 });
 
 test("release scanner detects common credential formats", () => {
@@ -29,4 +46,23 @@ test("bundled skill documents Sol Max and the Terra Max opt-in role", async () =
   assert.match(source, /Never select it automatically/);
   assert.match(source, /references\/routing-matrix\.md/);
   assert.match(source, /references\/subagent-skill-compatibility\.md/);
+});
+
+test("managed policy and bundled skill publish the quality-first dispatch contract", async () => {
+  const source = await readFile(BUNDLED_SKILL, "utf8");
+  for (const value of [WORKFLOW_POLICY, source]) {
+    assert.match(value, /quality gate.*cost gate|quality.*before.*cost/i);
+    assert.match(value, /gearbox-dispatch plan/);
+    assert.match(value, /root_inline/);
+    assert.match(value, /typed_child/);
+    assert.match(value, /isolated_role_root/);
+    assert.match(value, /typed_child_bridge/);
+    assert.match(value, /allowTypedBridge=false/);
+    assert.match(value, /ten-question acceptance/i);
+    assert.match(value, /one correction/i);
+    assert.match(value, /unsupported direct `spawn_agent` calls/i);
+    assert.match(value, /not intercepted by this repository/i);
+  }
+  assert.match(source, /isolated root, never a child/i);
+  assert.match(source, /references\/quality-first-dispatch\.md/);
 });

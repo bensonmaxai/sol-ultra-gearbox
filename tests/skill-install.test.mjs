@@ -29,6 +29,7 @@ async function fixture(t) {
     "references/risk-gates.md": "# Gates\n",
     "references/routing-matrix.md": "# Routing\n",
     "references/subagent-skill-compatibility.md": "# Compatibility\n",
+    "references/quality-first-dispatch.md": "# Quality-first dispatch\n",
   };
   for (const [path, content] of Object.entries(files)) {
     await mkdir(dirname(join(source, path)), { recursive: true });
@@ -61,8 +62,18 @@ test("skill install is preview-only by default and idempotent after apply", asyn
   assert.ok(
     status.sourceFiles.includes("references/subagent-skill-compatibility.md"),
   );
+  assert.ok(status.sourceFiles.includes("references/quality-first-dispatch.md"));
   const repeated = await installSkill({ source, target, apply: true });
   assert.equal(repeated.action, "up_to_date");
+});
+
+test("skill install refuses a source missing the quality-first dispatch contract", async (t) => {
+  const { source, target } = await fixture(t);
+  await rm(join(source, "references", "quality-first-dispatch.md"));
+  await assert.rejects(
+    installSkill({ source, target }),
+    /Skill source is missing references\/quality-first-dispatch\.md/,
+  );
 });
 
 test("skill install refuses an unmanaged target", async (t) => {

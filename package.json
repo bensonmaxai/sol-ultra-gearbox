@@ -15,6 +15,8 @@
     "smoke": "node scripts/gearbox.mjs smoke --all",
     "smoke:sdd": "node scripts/gearbox.mjs smoke-sdd",
     "apply": "node scripts/gearbox.mjs apply --promote-v2",
+    "dispatch:status": "node scripts/gearbox-dispatch.mjs status",
+    "acceptance": "node scripts/gearbox.mjs acceptance --all",
     "cost:evidence": "node scripts/cost-evidence.mjs status",
     "skill:status": "node scripts/skill.mjs status",
     "skill:install": "node scripts/skill.mjs install",

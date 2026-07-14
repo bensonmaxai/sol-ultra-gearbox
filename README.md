@@ -48,6 +48,8 @@ automatic route or the default upgrade from `terra_worker`.
 - Always use `fork_turns="none"` for typed roles. Let role TOML own model,
   reasoning effort, and sandbox settings.
 - Allow at most two direct children, depth 1, and no descendant agents.
+- Reserve three MultiAgentV2 session slots because the root consumes one slot;
+  this enables, but never exceeds, two simultaneous direct children.
 - Prefer multiple readers and one writer. A writer must own an exclusive file
   scope.
 - Read persisted rollout metadata instead of trusting a model's prose claim
@@ -61,6 +63,10 @@ automatic route or the default upgrade from `terra_worker`.
 - Stop after the first failed role. Do not retry a cost-bearing smoke test.
 - Back up and marker-manage every global write so rollback does not replace an
   unrelated complete config file.
+- Capture only the previous Gearbox-owned marker blocks and their bound hash.
+  Automatic rollback must restore those blocks exactly; a forced manual
+  rollback may preserve unrelated post-install config edits without restoring
+  a complete `config.toml` backup.
 
 See [the risk gates](skills/sol-ultra-gearbox/references/risk-gates.md) for the
 full decision table.
@@ -97,6 +103,52 @@ tool runtime. Static tests protect the managed policy and spawn-argument
 validator; persisted rollout metadata remains the authority for actual runtime
 identity.
 
+## Quality-first dispatch
+
+For supported actual delegation, Gearbox uses managed instructions plus the
+`gearbox-dispatch` runner. It does not intercept a direct Codex core
+`spawn_agent` call made outside those entrypoints.
+
+The managed policy is fail closed: missing, invalid, unmanaged, or
+hash-mismatched policy is `off`. In `off`, Gearbox makes no automatic routing
+decision. In `shadow`, it calculates and records a decision but the Sol root
+executes the work. In `active`, it may execute only a decision that passes all
+gates. Quality is always checked before cost, so an available cheaper role
+cannot reverse a quality rejection.
+
+Build a self-contained packet only when delegation is intended, then run
+`gearbox-dispatch plan` with the packet, current spawn-schema capability, and
+parent-permission facts. The possible shapes are:
+
+| Shape | Meaning |
+|---|---|
+| `root_inline` | Sol completes the work after a failed gate or unsafe permission shape. |
+| `typed_child` | Sol calls the exact typed `spawn_agent` arguments only when permissions match. |
+| `isolated_role_root` | Direct Luna/Terra read-only work in a separate isolated root when parent permission would not match. It is never a child. |
+| `typed_child_bridge` | Disabled for first activation with `allowTypedBridge=false`. |
+
+Unknown skills, generic roles, missing typed capability flags, and missing or
+mismatched runtime evidence remain root-inline. A cheap role gets one initial
+attempt and at most one correction for a concrete local output defect; identity,
+permission, scope, cleanup, policy, ambiguity, or hidden-coupling failures do
+not retry. Trusted current ten-question acceptance evidence and an applied
+activation manifest are required before first active mode. A hard active-mode
+failure stops delegation; the manifest path is redacted from public output, and
+only the managed rollback command can consume it to alter global state.
+
+Q10 verifies exact typed fields, two distinct non-empty task messages, declared
+disjoint scope mapping, persisted child identity, lineage, markers, tokens, no
+writers or descendants, and an unchanged fixture. It does not claim observed
+per-file read telemetry or byte-identical prompt persistence.
+
+The exact root workflow is: build packet, load policy, plan, complete
+`root_inline` in Sol or execute/validate the selected `typed_child` or
+`isolated_role_root`, reject missing evidence, stop and roll back through the
+hash-bound manifest after a hard active failure, then let Sol integrate, test,
+record a privacy-safe outcome, and clean the packet. See the
+[quality-first dispatch reference](skills/sol-ultra-gearbox/references/quality-first-dispatch.md)
+for the complete contract.
+
 ## Requirements
 
 - Node.js 20 or newer
@@ -114,11 +166,22 @@ The CLI can be selected with `CODEX_BIN`. `CODEX_HOME` defaults to
 npm test
 npm run release:check
 npm run doctor -- --json
-node scripts/gearbox.mjs apply --promote-v2 --dry-run
+node scripts/gearbox.mjs apply --promote-v2 --dispatch-mode active --dry-run
+npm run acceptance
+node scripts/gearbox.mjs apply --promote-v2 --dispatch-mode active
+npm run dispatch:status
 ```
 
-These commands do not run model-backed role probes and do not modify global
-configuration.
+An active status reports integrity `pass`, `allowTypedBridge=false`, the policy
+digest, and current managed configuration, role, launcher, and runtime hashes
+without exposing the manifest path.
+
+The dry run does not run model-backed probes or modify global configuration.
+`npm run acceptance` and the final active apply are paid, owner-authorized
+operations. The final apply runs fresh paid smoke and acceptance evidence unless
+both trusted reuse paths (`--reuse-smoke` and `--reuse-acceptance`) validate
+against the current clean binding. All global changes are manifest-bound and
+reversible through the managed rollback command.
 
 ## Install the global skill
 
@@ -187,12 +250,15 @@ Apply only after explicit approval:
 node scripts/gearbox.mjs apply --promote-v2
 ```
 
-By default the apply command reruns all live role probes. To avoid immediately
-repeating a just-completed paid smoke, explicitly provide its local report:
+By default the active apply runs fresh role smoke and ten-question acceptance
+evidence. To avoid immediately repeating those paid checks, explicitly provide
+both trusted local reports:
 
 ```bash
 node scripts/gearbox.mjs apply --promote-v2 \
-  --reuse-smoke reports/<run>/smoke.json
+  --dispatch-mode active \
+  --reuse-smoke reports/<run>/smoke.json \
+  --reuse-acceptance reports/<run>/acceptance.json
 ```
 
 Reuse fails closed unless the report is under this repo's `reports/`, is a
@@ -206,6 +272,17 @@ manifest printed by the apply command:
 node scripts/gearbox.mjs rollback --manifest reports/<run>/install-manifest.json
 ```
 
+The post-install CLI probe requires persisted `gpt-5.6-sol` runtime metadata.
+Active mode accepts the verified Max or Ultra effort because the Desktop task's
+Ultra selection is task-local and is not inherited by a separate `codex exec`
+probe. The manifest records the actual effort; this gate does not claim that a
+Desktop task was opened in Ultra mode.
+
+Failed manifests retain privacy-safe static-check and fresh-root diagnostics.
+Rollback restores the previous Gearbox-owned blocks and verifies the bound
+pre-install hash. Legacy failed manifests without rollback-state metadata may
+be recovered only when a bounded reconstruction exactly matches that hash.
+
 Existing Codex tasks retain the tool schema captured at task start. Validate
 the `agent_type` surface again in a fresh task.
 
@@ -218,6 +295,8 @@ artifacts from their ignored local reports:
 npm run release:evidence -- \
   --smoke reports/<run>/smoke.json \
   --sdd reports/<run>/sdd.json \
+  --acceptance reports/<run>/acceptance.json \
+  --activation-manifest reports/<run>/install-manifest.json \
   --usage reports/<run>/real-work-usage.json
 ```
 
@@ -247,9 +326,9 @@ node scripts/cost-evidence.mjs add reports/cost-evidence.json record.json
 ```
 
 Nine complete pairs remain ineligible. Ten pairs expose aggregate raw evidence
-and eligibility only; the repository still does not publish prices or a
-savings estimator. Any future estimate must use a separately dated official
-pricing source.
+and eligibility only; the repository still does not publish prices, a savings
+percentage, or an estimator. Any future estimate must use a separately dated
+official pricing source.
 
 ## License
 

@@ -4,6 +4,7 @@ import {
   SMOKE_REUSE_TTL_MS,
   createRuntimeBinding,
   validateSddAdapterEvidence,
+  validateTrustedAcceptance,
   validateTrustedSmoke,
 } from "../lib/runtime-evidence.mjs";
 
@@ -117,6 +118,43 @@ function report(runtimeBinding = binding(), overrides = {}) {
   };
 }
 
+function acceptanceReport(runtimeBinding = binding(), overrides = {}) {
+  const questions = [
+    ["Q1_ROOT_TRIVIAL", "root_inline", "ROOT_TRIVIAL"],
+    ["Q2_ISOLATED_LUNA", "isolated_role_root", "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH"],
+    ["Q3_ISOLATED_TERRA", "isolated_role_root", "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH"],
+    ["Q4_TYPED_WORKER", "typed_child", "DELEGATE_TYPED_PERMISSION_MATCH"],
+    ["Q5_ROOT_HIGH_RISK", "root_inline", "ROOT_HIGH_RISK"],
+    ["Q6_UNKNOWN_SKILL", "root_inline", "ROOT_UNKNOWN_SKILL"],
+    ["Q7_BRIDGE_DISABLED", "root_inline", "ROOT_BRIDGE_DISABLED"],
+    ["Q8_RUNTIME_MISMATCH_REJECTED", "root_inline", "ROOT_RUNTIME_EVIDENCE_FAILED"],
+    ["Q9_WRITE_VIOLATION_REJECTED", "root_inline", "ROOT_PERMISSION_VIOLATION"],
+    ["Q10_TWO_TYPED_READERS", "typed_child", "DELEGATE_TYPED_PERMISSION_MATCH"],
+  ].map(([id, selectedShape, reasonCode]) => ({
+    id, selectedShape, reasonCode, pass: true, runtime: true, cleanup: { pass: true },
+    ...(id === "Q8_RUNTIME_MISMATCH_REJECTED" || id === "Q9_WRITE_VIOLATION_REJECTED"
+      ? { rejected: true, violationDetected: true }
+      : {}),
+  }));
+  return {
+    schemaVersion: 1,
+    kind: "quality_first_acceptance_exam",
+    generatedAt: "2026-07-13T04:00:00.000Z",
+    pass: true,
+    expectedQuestionCount: 10,
+    runtimeBinding,
+    runtimeBindingAfterSha256: runtimeBinding.sha256,
+    runtimeBindingStable: true,
+    globalConfigBeforeSha256: runtimeBinding.configSha256,
+    globalConfigAfterSha256: runtimeBinding.configSha256,
+    globalConfigUnchanged: true,
+    questions,
+    cleanup: { pass: true },
+    activationEligible: true,
+    ...overrides,
+  };
+}
+
 test("trusted smoke accepts an exact, recent, clean runtime binding", () => {
   const current = binding();
   const result = validateTrustedSmoke({
@@ -200,6 +238,56 @@ test("trusted smoke rejects tampering and incomplete runtime evidence", () => {
       }).pass,
       false,
     );
+  }
+});
+
+test("trusted acceptance requires a current, complete, activation-eligible ten-question exam", () => {
+  const current = binding();
+  const valid = validateTrustedAcceptance({
+    report: acceptanceReport(current),
+    currentBinding: current,
+    nowMs: Date.parse("2026-07-13T04:10:00.000Z"),
+    reportFile: { pathConfined: true, regular: true, symlink: false },
+  });
+  assert.equal(valid.pass, true);
+  assert.equal(valid.ttlMs, SMOKE_REUSE_TTL_MS);
+
+  const invalid = [
+    acceptanceReport(current, { activationEligible: false }),
+    acceptanceReport(current, { expectedQuestionCount: 9 }),
+    acceptanceReport(current, { questions: acceptanceReport(current).questions.slice(0, 9) }),
+    acceptanceReport(current, { runtimeBindingAfterSha256: "0".repeat(64) }),
+  ];
+  for (const candidate of invalid) {
+    assert.equal(validateTrustedAcceptance({
+      report: candidate,
+      currentBinding: current,
+      nowMs: Date.parse("2026-07-13T04:10:00.000Z"),
+      reportFile: { pathConfined: true, regular: true, symlink: false },
+    }).pass, false);
+  }
+});
+
+test("trusted acceptance fails closed for stale, future, dirty, drifted, or unsafe report files", () => {
+  const current = binding();
+  const reportValue = acceptanceReport(current);
+  const variants = [
+    { nowMs: Date.parse("2026-07-13T04:31:00.000Z") },
+    { nowMs: Date.parse("2026-07-13T03:58:59.000Z") },
+    { currentBinding: binding({ gitStatus: " M lib/acceptance-exam.mjs\n" }) },
+    { currentBinding: binding({ runtimeHashes: { "lib/acceptance-exam.mjs": "1".repeat(64) } }) },
+    { reportFile: { pathConfined: false, regular: true, symlink: false } },
+    { reportFile: { pathConfined: true, regular: false, symlink: true } },
+  ];
+  for (const variant of variants) {
+    const result = validateTrustedAcceptance({
+      report: reportValue,
+      currentBinding: current,
+      nowMs: Date.parse("2026-07-13T04:10:00.000Z"),
+      reportFile: { pathConfined: true, regular: true, symlink: false },
+      ...variant,
+    });
+    assert.equal(result.pass, false);
   }
 });
 

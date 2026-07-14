@@ -1,4 +1,5 @@
 reports/
+reports/dispatch-ledger.jsonl
 node_modules/
 .DS_Store
 *.log

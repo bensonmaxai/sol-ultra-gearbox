@@ -8,6 +8,8 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
+  readlink,
   realpath,
   rename,
   stat,
@@ -23,27 +25,54 @@ import {
   CONFIG_LEGACY_THREADS_MARKER,
   CONFIG_ROLES_MARKER,
   CONFIG_V2_MARKER,
+  DISPATCH_RUNTIME_FILES,
+  MULTI_AGENT_SESSION_THREADS,
+  RUNTIME_BINDING_FILES,
   ROLE_SPECS,
   atomicWrite,
   backupFile,
+  captureConfigRollbackState,
   cleanupProbeArtifacts,
+  findRecentRollouts,
   findProbeRollouts,
   hashTree,
+  installDispatchRuntime,
   readOptional,
   redactSensitive,
   removeOwnedSmokeProjectEntries,
   renderAgentsMd,
   renderConfig,
   restoreBackup,
-  rollbackConfig,
+  rollbackDispatchRuntime,
+  restoreConfigRollbackState,
   sha256,
+  summarizeRollout,
+  validateTypedSpawnArgs,
+  validatePostInstallRootRuntime,
   validateRoleText,
   verifyProbe,
   writeJson,
 } from "../lib/gearbox.mjs";
+import { runIsolatedRole } from "../lib/dispatch-runner.mjs";
+import {
+  ACCEPTANCE_PARALLEL_CHILDREN,
+  attachAcceptanceMetadata,
+  evaluateAcceptanceViolation,
+  planAcceptanceScenario,
+  runAcceptanceExam,
+  validateAcceptanceDeliverable,
+} from "../lib/acceptance-exam.mjs";
+import { validateDispatchResult } from "../lib/dispatch-evidence.mjs";
+import {
+  assertManagedPolicyTarget,
+  createDispatchPolicy,
+  DISPATCH_POLICY_RELATIVE_PATH,
+  serializeDispatchPolicy,
+} from "../lib/dispatch-policy.mjs";
 import {
   createRuntimeBinding,
   validateSddAdapterEvidence,
+  validateTrustedAcceptance,
   validateTrustedSmoke,
 } from "../lib/runtime-evidence.mjs";
 
@@ -54,13 +83,6 @@ const SMOKE_ROOT = Object.freeze({ model: "gpt-5.6-sol", effort: "max" });
 const APP_CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex";
 const CODEX_BIN =
   process.env.CODEX_BIN ?? (existsSync(APP_CODEX_BIN) ? APP_CODEX_BIN : "codex");
-const RUNTIME_BINDING_PATHS = Object.freeze([
-  "lib/gearbox.mjs",
-  "lib/runtime-evidence.mjs",
-  "scripts/gearbox.mjs",
-  "scripts/codex-typed-agent",
-]);
-
 function timestamp() {
   return new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
 }
@@ -167,7 +189,7 @@ async function collectRuntimeBinding() {
     roleHashes[spec.name] = sha256(await readBoundSource(rolePath(spec)));
   }
   const runtimeHashes = {};
-  for (const path of RUNTIME_BINDING_PATHS) {
+  for (const path of RUNTIME_BINDING_FILES) {
     runtimeHashes[path] = sha256(
       await readBoundSource(join(REPO_ROOT, path)),
     );
@@ -229,6 +251,389 @@ async function loadTrustedSmoke(reportPath) {
       ttlMs: validation.ttlMs,
     },
   };
+}
+
+async function loadTrustedAcceptance(reportPath) {
+  const reportsPath = join(REPO_ROOT, "reports");
+  const reportsMetadata = await lstat(reportsPath);
+  if (!reportsMetadata.isDirectory() || reportsMetadata.isSymbolicLink()) {
+    throw new Error("Repository reports directory must be a real directory");
+  }
+  const reportsRoot = await realpath(reportsPath);
+  const requestedPath = resolve(reportPath);
+  const metadata = await lstat(requestedPath);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new Error("Trusted acceptance path must be a regular non-symlink file");
+  }
+  const actualPath = await realpath(requestedPath);
+  const pathFromReports = relative(reportsRoot, actualPath);
+  if (
+    pathFromReports === "" || pathFromReports === ".." ||
+    pathFromReports.startsWith(`..${sep}`) || resolve(reportsRoot, pathFromReports) !== actualPath
+  ) {
+    throw new Error("Trusted acceptance path must remain under this repository's reports directory");
+  }
+  const report = JSON.parse(await readFile(actualPath, "utf8"));
+  const validation = validateTrustedAcceptance({
+    report,
+    currentBinding: await collectRuntimeBinding(),
+    reportFile: { pathConfined: true, regular: true, symlink: false },
+  });
+  if (!validation.pass) {
+    const failed = Object.entries(validation.checks).filter(([, pass]) => !pass).map(([name]) => name).join(", ");
+    throw new Error(`Trusted acceptance reuse rejected: ${failed}`);
+  }
+  return attachAcceptanceMetadata(report, {
+    reportDirectory: dirname(actualPath),
+    reuse: { mode: "trusted_recent_acceptance", validatedAt: new Date().toISOString(), ageMs: validation.ageMs, ttlMs: validation.ttlMs },
+  });
+}
+
+function acceptanceRuntime(summary) {
+  return {
+    persisted: Boolean(summary?.sessionMeta && summary?.turnContext),
+    model: summary?.turnContext?.model ?? null,
+    effort: summary?.turnContext?.effort ?? null,
+    tokenUsage: summary?.tokenUsage ?? null,
+  };
+}
+
+async function singleRootSummary(sessionRoot, cwd, sinceMs) {
+  const paths = await findRecentRollouts(sessionRoot, sinceMs);
+  const summaries = await Promise.all(paths.map((path) => summarizeRollout(path)));
+  const roots = summaries.filter((summary) =>
+    summary?.sessionMeta?.cwd === cwd && summary?.threadSource !== "subagent",
+  );
+  return roots.length === 1 ? roots[0] : null;
+}
+
+function acceptanceResult(scenario, { decision = null, ...values } = {}) {
+  return {
+    id: scenario.id,
+    selectedShape: decision?.selectedShape ?? null,
+    reasonCode: decision?.reasonCode ?? null,
+    pass: false,
+    runtime: null,
+    cleanup: { pass: false },
+    ...values,
+  };
+}
+
+export async function runAcceptanceRoot(scenario, { decision = null, priorResults = new Map() } = {}) {
+  if (scenario.id === "Q8_RUNTIME_MISMATCH_REJECTED" || scenario.id === "Q9_WRITE_VIOLATION_REJECTED") {
+    const evidence = priorResults.get("Q2_ISOLATED_LUNA")?.dispatchEvidence;
+    if (!evidence) return acceptanceResult(scenario, { decision, hardFailure: "runtime" });
+    const evaluated = evaluateAcceptanceViolation({
+      ...evidence,
+      violation: scenario.id === "Q8_RUNTIME_MISMATCH_REJECTED"
+        ? "runtime_mismatch"
+        : "filesystem_write",
+    });
+    return acceptanceResult(scenario, {
+      decision: { selectedShape: evaluated.selectedShape, reasonCode: evaluated.reasonCode },
+      pass: evaluated.pass,
+      runtime: evaluated.runtime,
+      cleanup: evaluated.cleanup,
+      violationDetected: evaluated.violationDetected,
+      rejected: evaluated.rejected,
+      hardFailure: evaluated.pass ? null : "runtime",
+    });
+  }
+  const fixture = await mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-luna_clerk-"));
+  const probeHome = await mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-home-luna_clerk-"));
+  const authLink = join(probeHome, "auth.json");
+  let cleanup = false;
+  let answer;
+  try {
+    await writeFile(join(fixture, "fixture.txt"), "BEFORE\n", "utf8");
+    await symlink(join(CODEX_HOME, "auth.json"), authLink);
+    const marker = `ACCEPTANCE_ROOT_OK:${scenario.id}`;
+    const writeTask = scenario.id === "Q1_ROOT_TRIVIAL"
+      ? "Replace the single line BEFORE with AFTER in fixture.txt. Do not spawn or delegate."
+      : "Read fixture.txt. Do not edit, spawn, or delegate.";
+    const startedAtMs = Date.now();
+    const command = await runCommand(CODEX_BIN, [
+      "--strict-config", "-c", 'model="gpt-5.6-sol"', "-c", 'model_reasoning_effort="ultra"',
+      "-s", scenario.id === "Q1_ROOT_TRIVIAL" ? "workspace-write" : "read-only", "-a", "never", "-C", fixture,
+      "exec", "--json", "--skip-git-repo-check", "--ignore-user-config",
+      `${writeTask} Return exactly ${marker}.`,
+    ], { cwd: fixture, timeoutMs: 900_000, env: { CODEX_HOME: probeHome } });
+    const summary = await singleRootSummary(join(probeHome, "sessions"), fixture, startedAtMs);
+    const runtime = acceptanceRuntime(summary);
+    const clean = (summary?.functionCalls ?? []).filter((call) => call?.name?.endsWith("spawn_agent")).length === 0;
+    const markerReturned = (summary?.finalTexts ?? []).some((text) => text.includes(marker));
+    const fixtureContent = await readFile(join(fixture, "fixture.txt"), "utf8");
+    const filesystemPass = scenario.id === "Q1_ROOT_TRIVIAL"
+      ? fixtureContent === "AFTER\n"
+      : fixtureContent === "BEFORE\n";
+    answer = acceptanceResult(scenario, {
+      decision,
+      pass: command.code === 0 && !command.timedOut && clean && markerReturned && filesystemPass && runtime.persisted,
+      runtime,
+      cleanup: { pass: false },
+      hardFailure: command.code === 0 && !command.timedOut ? null : "runtime",
+    });
+  } catch {
+    answer = acceptanceResult(scenario, { decision, hardFailure: "runtime" });
+  } finally {
+    await unlink(authLink).catch(() => {});
+    try {
+      const removed = await cleanupProbeArtifacts([probeHome, fixture]);
+      cleanup = removed.removed.length === 2;
+    } catch {
+      cleanup = false;
+    }
+  }
+  return { ...answer, cleanup: { pass: cleanup } };
+}
+
+export async function runAcceptanceIsolated(scenario, {
+  decision = null,
+  executeIsolatedRole = runIsolatedRole,
+  codexBin = CODEX_BIN,
+  codexHome = CODEX_HOME,
+} = {}) {
+  const roleName = scenario.id === "Q2_ISOLATED_LUNA" ? "luna_clerk" : "terra_explorer";
+  const spec = ROLE_SPECS.find((role) => role.name === roleName);
+  const fixture = await mkdtemp(join(tmpdir(), `sol-ultra-gearbox-v2-dispatch-${roleName}-`));
+  let cleanup = false;
+  let answer;
+  try {
+    if (roleName === "luna_clerk") {
+      const records = Array.from({ length: 25 }, (_, index) => `record-${index + 1}`).join("\n");
+      await writeFile(join(fixture, "records.txt"), `${records}\n`, "utf8");
+    } else {
+      for (let index = 0; index < 5; index += 1) {
+        await writeFile(join(fixture, `trace-${index}.txt`), `trace ${index}\n`, "utf8");
+      }
+    }
+    const task = roleName === "luna_clerk"
+      ? "Read only records.txt. Count its non-empty records. Return exactly one JSON object with no markdown and no extra keys: {\"count\":25}."
+      : "Read only the five trace-*.txt files. Return exactly one JSON object with no markdown and the filenames sorted ascending under the sole key filenames: {\"filenames\":[\"trace-0.txt\",\"trace-1.txt\",\"trace-2.txt\",\"trace-3.txt\",\"trace-4.txt\"]}.";
+    let deliverableValid = false;
+    const result = await executeIsolatedRole({
+      codexBin, codexHome, roleSpec: spec,
+      roleSource: await readFile(rolePath(spec), "utf8"), cwd: fixture, task,
+      taskHash: sha256(task),
+      onDeliverable: async (value) => {
+        deliverableValid = validateAcceptanceDeliverable(scenario.id, value);
+        return deliverableValid;
+      },
+    });
+    const runnerDecision = {
+      selectedShape: result.executionShape,
+      role: result.role,
+      reasonCode: result.reasonCode,
+      taskHash: result.taskHash,
+      roleHash: result.expected?.roleHash,
+    };
+    const validation = validateDispatchResult({ result, decision: runnerDecision, roleSpec: spec });
+    const plannerMatches = decision?.selectedShape === runnerDecision.selectedShape &&
+      decision?.reasonCode === runnerDecision.reasonCode && decision?.role === runnerDecision.role;
+    answer = acceptanceResult(scenario, {
+      decision: runnerDecision,
+      pass: result.pass && validation.pass && plannerMatches && deliverableValid,
+      runtime: { persisted: result.checks?.runtimePersisted === true, model: result.actual?.model, effort: result.actual?.effort, tokenUsage: { total_tokens: result.actual?.parentTokens } },
+      cleanup: { pass: false },
+      hardFailure: result.rollbackRequired || !validation.pass ? "runtime" : null,
+      dispatchEvidence: { result, decision: runnerDecision, roleSpec: spec },
+    });
+  } catch {
+    answer = acceptanceResult(scenario, { decision, hardFailure: "runtime" });
+  } finally {
+    try {
+      const removed = await cleanupProbeArtifacts([fixture]);
+      cleanup = removed.removed.length === 1;
+    } catch { cleanup = false; }
+  }
+  return { ...answer, cleanup: { pass: cleanup } };
+}
+
+function spawnedChildren(parent, summaries) {
+  const parentId = parent?.sessionId ?? parent?.sessionMeta?.id ?? parent?.sessionMeta?.session_id;
+  return summaries.filter((summary) =>
+    summary?.sessionMeta?.source?.subagent?.thread_spawn?.parent_thread_id === parentId,
+  );
+}
+
+export function validateAcceptanceParallelSpawn(args, expected) {
+  const message = typeof args?.message === "string" ? args.message : "";
+  const checks = {
+    exactKeys: JSON.stringify(Object.keys(args ?? {}).sort()) ===
+      JSON.stringify(["agent_type", "fork_turns", "message", "task_name"].sort()),
+    agentType: args?.agent_type === expected?.role,
+    taskName: args?.task_name === expected?.taskName,
+    forkTurnsNone: args?.fork_turns === "none",
+    messageExact: message === expected?.message,
+    messagePresent: message.trim().length > 0,
+    typedArgs: validateTypedSpawnArgs(args).pass,
+  };
+  const required = [
+    "exactKeys",
+    "agentType",
+    "taskName",
+    "forkTurnsNone",
+    "messagePresent",
+    "typedArgs",
+  ];
+  return { pass: required.every((key) => checks[key] === true), checks };
+}
+
+function exactParallelSpawn(args, expected) {
+  return validateAcceptanceParallelSpawn(args, expected).pass;
+}
+
+function acceptanceChildFacts(child, expected, spawnArgs) {
+  const sandbox = child?.turnContext?.sandbox_policy?.type ?? null;
+  return {
+    role: child?.sessionMeta?.agent_role ?? child?.sessionMeta?.source?.subagent?.thread_spawn?.agent_role ?? null,
+    model: child?.turnContext?.model ?? null,
+    effort: child?.turnContext?.effort ?? null,
+    depth: child?.sessionMeta?.source?.subagent?.thread_spawn?.depth ?? null,
+    sandbox,
+    writer: sandbox !== "read-only",
+    descendants: (child?.functionCalls ?? []).filter((call) => call?.name?.endsWith("spawn_agent")).length,
+    declaredReadScope: exactParallelSpawn(spawnArgs, expected) ? expected.readScope : null,
+    markerReturned: (child?.finalTexts ?? []).some((text) => text.trim() === expected.marker),
+    runtimePersisted: Boolean(child?.sessionMeta && child?.turnContext),
+    tokenUsage: child?.tokenUsage ?? null,
+  };
+}
+
+async function snapshotAcceptanceTree(root) {
+  const entries = {};
+  async function visit(path) {
+    const metadata = await lstat(path);
+    const key = relative(root, path) || ".";
+    if (metadata.isSymbolicLink()) {
+      entries[key] = { type: "symlink", mode: metadata.mode & 0o7777, target: await readlink(path) };
+      return;
+    }
+    if (metadata.isDirectory()) {
+      entries[key] = { type: "directory", mode: metadata.mode & 0o7777 };
+      for (const name of (await readdir(path)).sort()) await visit(join(path, name));
+      return;
+    }
+    entries[key] = metadata.isFile()
+      ? { type: "file", mode: metadata.mode & 0o7777, sha256: sha256(await readFile(path)) }
+      : { type: "other", mode: metadata.mode & 0o7777 };
+  }
+  await visit(root);
+  return entries;
+}
+
+export async function runAcceptanceParallel(scenario, { decision = null } = {}) {
+  const fixture = await mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-luna_clerk-"));
+  const probeHome = await mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-home-luna_clerk-"));
+  const authLink = join(probeHome, "auth.json");
+  let cleanup = false;
+  let answer;
+  try {
+    await writeFile(join(fixture, "reader-a.txt"), "alpha\n", "utf8");
+    await writeFile(join(fixture, "reader-b.txt"), "beta\n", "utf8");
+    const beforeTree = await snapshotAcceptanceTree(fixture);
+    await symlink(join(CODEX_HOME, "auth.json"), authLink);
+    const luna = ROLE_SPECS.find((role) => role.name === "luna_clerk");
+    const terra = ROLE_SPECS.find((role) => role.name === "terra_explorer");
+    const startedAtMs = Date.now();
+    const parentMarker = "Q10_PARENT_OK";
+    const exactCalls = ACCEPTANCE_PARALLEL_CHILDREN.map((child) => JSON.stringify({
+      agent_type: child.role,
+      fork_turns: "none",
+      message: child.message,
+      task_name: child.taskName,
+    }));
+    const prompt = [
+      "This is an explicitly authorized acceptance fixture.",
+      "Call spawn_agent exactly twice and no other delegation.",
+      `Use exactly these argument objects and no extra fields:\n${exactCalls.join("\n")}`,
+      `Do not pass model, reasoning_effort, model_reasoning_effort, or service_tier. Wait for both children. Do not edit files. After both exact child markers arrive, reply exactly ${parentMarker}.`,
+    ].join("\n");
+    const command = await runCommand(CODEX_BIN, [
+      "--strict-config", "-c", "features.multi_agent_v2.enabled=true", "-c", `features.multi_agent_v2.max_concurrent_threads_per_session=${MULTI_AGENT_SESSION_THREADS}`,
+      "-c", "features.multi_agent_v2.hide_spawn_agent_metadata=false", "-c", 'features.multi_agent_v2.tool_namespace="agents"', "-c", "agents.max_depth=1",
+      "-c", `agents.${luna.name}.description=${JSON.stringify(luna.description)}`, "-c", `agents.${luna.name}.config_file=${JSON.stringify(rolePath(luna))}`,
+      "-c", `agents.${terra.name}.description=${JSON.stringify(terra.description)}`, "-c", `agents.${terra.name}.config_file=${JSON.stringify(rolePath(terra))}`,
+      "-c", 'model="gpt-5.6-sol"', "-c", 'model_reasoning_effort="ultra"', "-s", "read-only", "-a", "never", "-C", fixture,
+      "exec", "--json", "--skip-git-repo-check", "--ignore-user-config", prompt,
+    ], { cwd: fixture, timeoutMs: 900_000, env: { CODEX_HOME: probeHome } });
+    const paths = await findRecentRollouts(join(probeHome, "sessions"), startedAtMs);
+    const summaries = await Promise.all(paths.map((path) => summarizeRollout(path)));
+    const parents = summaries.filter((summary) => summary?.sessionMeta?.cwd === fixture && summary?.threadSource !== "subagent");
+    const parent = parents.length === 1 ? parents[0] : null;
+    const children = spawnedChildren(parent, summaries);
+    const spawnCalls = (parent?.functionCalls ?? []).filter((call) => call?.name?.endsWith("spawn_agent"));
+    const spawnChecks = ACCEPTANCE_PARALLEL_CHILDREN.map((expected) => {
+      const roleCalls = spawnCalls.filter((call) => call?.args?.agent_type === expected.role);
+      const args = roleCalls.length === 1 ? roleCalls[0].args : null;
+      const contract = validateAcceptanceParallelSpawn(args, expected);
+      return {
+        role: expected.role,
+        callCount: roleCalls.length,
+        keys: Object.keys(args ?? {}).sort(),
+        ...contract.checks,
+        spawnContract: contract.pass,
+        messageSha256: typeof args?.message === "string" ? sha256(args.message) : null,
+        expectedMessageSha256: sha256(expected.message),
+        exact: contract.pass,
+      };
+    });
+    const messageHashes = spawnChecks.map((check) => check.messageSha256);
+    const messagesDistinct = messageHashes.every((hash) => typeof hash === "string") &&
+      new Set(messageHashes).size === ACCEPTANCE_PARALLEL_CHILDREN.length;
+    const validSpawns = spawnCalls.length === ACCEPTANCE_PARALLEL_CHILDREN.length &&
+      spawnChecks.every((check) => check.exact) && messagesDistinct;
+    const childFacts = children.map((child) => {
+      const role = child?.sessionMeta?.agent_role ?? child?.sessionMeta?.source?.subagent?.thread_spawn?.agent_role;
+      const expected = ACCEPTANCE_PARALLEL_CHILDREN.find((entry) => entry.role === role);
+      const spawnCall = spawnCalls.find((call) => call?.args?.agent_type === role);
+      return expected
+        ? acceptanceChildFacts(child, expected, spawnCall?.args)
+        : { role, model: null, effort: null, depth: null, sandbox: null, writer: true, descendants: 0, declaredReadScope: null, markerReturned: false, runtimePersisted: false, tokenUsage: null };
+    });
+    const parentId = parent?.sessionId ?? parent?.sessionMeta?.id ?? parent?.sessionMeta?.session_id;
+    const childIds = children.map((child) => child?.sessionId ?? child?.sessionMeta?.id ?? child?.sessionMeta?.session_id);
+    const lineageExact = parents.length === 1 && summaries.length === 3 && children.length === 2 &&
+      typeof parentId === "string" && new Set(childIds).size === 2 &&
+      childIds.every((id) => typeof id === "string" && id !== parentId) &&
+      children.every((child) => child?.sessionMeta?.source?.subagent?.thread_spawn?.parent_thread_id === parentId);
+    const afterTree = await snapshotAcceptanceTree(fixture);
+    const filesystemUnchanged = JSON.stringify(beforeTree) === JSON.stringify(afterTree);
+    const parentMarkerReturned = (parent?.finalTexts ?? []).some((text) => text.trim() === parentMarker);
+    const topology = {
+      parent: { model: parent?.turnContext?.model, effort: parent?.turnContext?.effort, runtimePersisted: Boolean(parent?.sessionMeta && parent?.turnContext), tokenUsage: parent?.tokenUsage ?? null },
+      children: childFacts,
+      writerCount: 0,
+      descendantCount: childFacts.reduce((count, child) => count + child.descendants, 0),
+      spawnsExact: validSpawns,
+      messagesDistinct,
+      spawnChecks,
+      lineageExact,
+      filesystemUnchanged,
+      parentMarkerReturned,
+    };
+    topology.writerCount = childFacts.filter((child) => child.writer).length;
+    const childRuntime = childFacts.length === 2 && ACCEPTANCE_PARALLEL_CHILDREN.every((spec) =>
+      childFacts.some((child) => child.role === spec.role && child.model === spec.model && child.effort === spec.effort &&
+        child.depth === 1 && child.sandbox === "read-only" && child.runtimePersisted && child.markerReturned &&
+        Number.isFinite(child.tokenUsage?.total_tokens)),
+    );
+    answer = acceptanceResult(scenario, {
+      decision,
+      pass: command.code === 0 && !command.timedOut && validSpawns && childRuntime &&
+        lineageExact && filesystemUnchanged && parentMarkerReturned && topology.writerCount === 0 && topology.descendantCount === 0,
+      runtime: acceptanceRuntime(parent),
+      topology,
+      cleanup: { pass: false },
+      hardFailure: command.code === 0 && !command.timedOut ? null : "runtime",
+    });
+  } catch {
+    answer = acceptanceResult(scenario, { decision, hardFailure: "runtime" });
+  } finally {
+    await unlink(authLink).catch(() => {});
+    try { cleanup = (await cleanupProbeArtifacts([probeHome, fixture])).removed.length === 2; } catch { cleanup = false; }
+  }
+  return { ...answer, cleanup: { pass: cleanup } };
 }
 
 async function runDoctor() {
@@ -883,8 +1288,61 @@ async function runSmokeAll({ writeReport = true } = {}) {
   return report;
 }
 
-async function postInstallRootSmoke() {
+function acceptanceMarkdown(report) {
+  const rows = report.questions.map((question) =>
+    `| ${question.id} | ${question.pass ? "PASS" : "FAIL"} | ${question.selectedShape} | ${question.reasonCode} | ${question.runtime ? "yes" : "no"} | ${question.cleanup.pass ? "yes" : "no"} |`,
+  ).join("\n");
+  return `# Gearbox V2 Acceptance Exam\n\n- Generated: ${report.generatedAt}\n- Status: ${report.pass ? "PASS" : "FAIL"}\n- Activation eligible: ${report.activationEligible ? "yes" : "no"}\n- Runtime binding stable: ${report.runtimeBindingStable ? "yes" : "no"}\n- Global config unchanged: ${report.globalConfigUnchanged ? "yes" : "no"}\n\n| Question | Status | Shape | Reason | Persisted runtime | Cleanup |\n|---|---|---|---|---|---|\n${rows}\n`;
+}
+
+async function runAcceptanceAll({ roleSmoke = null } = {}) {
+  const doctor = await runDoctor();
+  if (!doctor.pass) throw new Error("Preflight doctor failed");
+  const modelCache = JSON.parse(await readFile(join(CODEX_HOME, "models_cache.json"), "utf8"));
+  const sol = modelCache.models?.find((model) => model.slug === "gpt-5.6-sol");
+  if (!(sol?.supported_reasoning_levels ?? []).some((level) => level.effort === "ultra")) {
+    throw new Error("Model catalog does not support gpt-5.6-sol / ultra");
+  }
+  const runtimeBinding = await collectRuntimeBinding();
+  if (!runtimeBinding.git.clean) throw new Error("Acceptance requires a clean Git tree");
+  const smoke = roleSmoke ?? await runSmokeAll();
+  if (!smoke.pass) throw new Error("Acceptance requires current six-role smoke evidence");
+  const report = await runAcceptanceExam({
+    policy: { allowTypedBridge: false },
+    roleSmoke: smoke,
+    runtimeBinding,
+    collectRuntimeBinding,
+    readGlobalConfig: () => readFile(join(CODEX_HOME, "config.toml"), "utf8"),
+    executeRoot: runAcceptanceRoot,
+    executeIsolated: runAcceptanceIsolated,
+    executeTyped: async (scenario, { decision }) => {
+      const worker = smoke.roles?.find((role) => role.role === "terra_worker");
+      return acceptanceResult(scenario, {
+        decision,
+        pass: worker?.pass === true,
+        runtime: { persisted: worker?.checks?.parentPersisted === true && worker?.checks?.childPersisted === true, model: worker?.actual?.model, effort: worker?.actual?.effort, tokenUsage: worker?.actual?.tokenUsage ?? null },
+        cleanup: { pass: worker?.cleanup?.pass === true },
+      });
+    },
+    executeParallel: runAcceptanceParallel,
+    planScenario: (scenario) => planAcceptanceScenario({
+      scenario,
+      policy: { mode: "active", allowTypedBridge: false },
+      capabilities: { agentTypeVisible: true, runtimeMetadataAvailable: true, bridgeRuntimeVerified: false, permissionBypassActive: false },
+      roleSpecs: ROLE_SPECS,
+    }),
+    onQuestion: (question) => process.stdout.write(`QUESTION ${question.id} ${question.pass ? "PASS" : "FAIL"}\n`),
+  });
+  const directory = join(REPO_ROOT, "reports", `${timestamp()}-acceptance`);
+  await mkdir(directory, { recursive: true });
+  await writeJson(join(directory, "acceptance.json"), report);
+  await atomicWrite(join(directory, "acceptance.md"), acceptanceMarkdown(report));
+  return attachAcceptanceMetadata(report, { reportDirectory: directory });
+}
+
+async function postInstallRootSmoke({ active = false } = {}) {
   const marker = "GLOBAL_V2_ROOT_OK";
+  const startedAtMs = Date.now();
   const result = await runCommand(
     CODEX_BIN,
     [
@@ -902,11 +1360,15 @@ async function postInstallRootSmoke() {
     ],
     { timeoutMs: 600_000 },
   );
+  const summary = await singleRootSummary(join(CODEX_HOME, "sessions"), REPO_ROOT, startedAtMs);
+  const runtime = acceptanceRuntime(summary);
+  const runtimeValidation = validatePostInstallRootRuntime(runtime, { active });
   return {
     pass:
       result.code === 0 &&
       !result.timedOut &&
       result.stdout.includes(marker) &&
+      runtimeValidation.pass &&
       !/reserved .*schema mismatch|HTTP 400/i.test(
         `${result.stdout}\n${result.stderr}`,
       ),
@@ -916,15 +1378,48 @@ async function postInstallRootSmoke() {
     schemaMismatch: /reserved .*schema mismatch|HTTP 400/i.test(
       `${result.stdout}\n${result.stderr}`,
     ),
+    actual: runtime,
+    runtimeChecks: runtimeValidation.checks,
+    requiredRuntime: runtimeValidation.requiredRuntime,
   };
 }
 
 async function rollbackFromManifest(manifestPath, { force = false, reason = null } = {}) {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const configPath = manifest.config.path;
   if (manifest.status === "rolled_back" || manifest.status === "failed_rolled_back") {
+    const configWasHandled = (manifest.rollback?.actions ?? []).some(
+      (action) => action?.path === configPath,
+    );
+    if (configWasHandled) return manifest;
+    const currentConfig = await readFile(configPath, "utf8");
+    if (sha256(currentConfig) === manifest.config.beforeSha256) return manifest;
+    if (!force) {
+      throw new Error(
+        "Legacy rollback did not restore config.toml; rerun with --force for hash-bound recovery",
+      );
+    }
+    const recovered = restoreConfigRollbackState(currentConfig, {
+      rollbackState: manifest.config.rollbackState ?? null,
+      expectedSha256: manifest.config.beforeSha256,
+      codexHome: dirname(configPath),
+    });
+    await atomicWrite(
+      configPath,
+      recovered.source,
+      manifest.config.mode ?? 0o600,
+    );
+    manifest.rollback.actions.push({
+      path: configPath,
+      action: "managed_config_recovered",
+      strategy: recovered.strategy,
+      exact: recovered.exact,
+      sha256: sha256(recovered.source),
+    });
+    manifest.rollback.configRecoveredAt = new Date().toISOString();
+    await writeJson(manifestPath, manifest);
     return manifest;
   }
-  const configPath = manifest.config.path;
   const agentsPath = manifest.agents.path;
   const currentConfig = await readFile(configPath, "utf8");
   const currentAgents = await readFile(agentsPath, "utf8");
@@ -934,18 +1429,63 @@ async function rollbackFromManifest(manifestPath, { force = false, reason = null
   if (!force && manifest.agents.afterSha256 && sha256(currentAgents) !== manifest.agents.afterSha256) {
     throw new Error("AGENTS.md changed after installation; refusing rollback without --force");
   }
+  const dispatchEntries = manifest.files.filter((entry) => entry.kind?.startsWith("dispatch-"));
+  for (const entry of manifest.files) {
+    if (force || !entry.afterSha256) continue;
+    const metadata = await lstat(entry.targetPath);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) {
+      throw new Error(`managed file is no longer a regular file: ${entry.targetPath}`);
+    }
+    if (entry.mode !== undefined && (metadata.mode & 0o777) !== entry.mode) {
+      throw new Error(`managed file mode changed after installation: ${entry.targetPath}`);
+    }
+    const current = await readOptional(entry.targetPath);
+    if (current === null || sha256(current) !== entry.afterSha256) {
+      throw new Error(`managed file changed after installation: ${entry.targetPath}`);
+    }
+  }
 
+  const restoredConfig = restoreConfigRollbackState(currentConfig, {
+    rollbackState: manifest.config.rollbackState ?? null,
+    expectedSha256: manifest.config.beforeSha256,
+    codexHome: dirname(configPath),
+    allowHashMismatch: force && reason === null,
+  });
   await atomicWrite(
     configPath,
-    rollbackConfig(currentConfig),
+    restoredConfig.source,
     manifest.config.mode ?? 0o600,
   );
-  const actions = [];
+  const actions = [{
+    path: configPath,
+    action: "managed_config_restored",
+    strategy: restoredConfig.strategy,
+    exact: restoredConfig.exact,
+    sha256: sha256(restoredConfig.source),
+  }];
   actions.push(
     await restoreBackup(manifest.agents.backup, manifest.timestamp),
   );
   for (const entry of manifest.files) {
-    actions.push(await restoreBackup(entry.backup, manifest.timestamp));
+    if (entry.kind?.startsWith("dispatch-")) continue;
+    if (entry.removeOnRollback && !entry.backup.existed) {
+      try {
+        await unlink(entry.targetPath);
+        actions.push({ path: entry.targetPath, action: "removed" });
+      } catch (error) {
+        if (error?.code !== "ENOENT") throw error;
+        actions.push({ path: entry.targetPath, action: "already_absent" });
+      }
+    } else {
+      actions.push(await restoreBackup(entry.backup, manifest.timestamp));
+    }
+  }
+  if (dispatchEntries.length > 0) {
+    await rollbackDispatchRuntime({
+      manifest: { codexHome: CODEX_HOME, files: dispatchEntries },
+      force: true,
+    });
+    actions.push({ path: join(CODEX_HOME, "gearbox", "runtime"), action: "dispatch_runtime_restored" });
   }
   manifest.status = reason ? "failed_rolled_back" : "rolled_back";
   manifest.rollback = {
@@ -957,9 +1497,45 @@ async function rollbackFromManifest(manifestPath, { force = false, reason = null
   return manifest;
 }
 
-async function installAfterSmoke(smoke) {
+async function readManagedPolicyTarget(path) {
+  let metadata;
+  try {
+    metadata = await lstat(path);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    throw new Error("unmanaged dispatch policy target must be a regular file");
+  }
+  const source = await readFile(path, "utf8");
+  return assertManagedPolicyTarget(source);
+}
+
+async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null } = {}) {
+  if (dispatchMode !== null && !["shadow", "active"].includes(dispatchMode)) {
+    throw new Error("dispatch mode must be shadow or active");
+  }
   const runTimestamp = timestamp();
   const reportDirectory = join(REPO_ROOT, "reports", `${runTimestamp}-apply`);
+  const manifestPath = join(reportDirectory, "install-manifest.json");
+  const installId = `gearbox-${runTimestamp}`;
+  if (dispatchMode === "active") {
+    const trusted = validateTrustedAcceptance({
+      report: acceptance,
+      currentBinding: await collectRuntimeBinding(),
+      reportFile: { pathConfined: true, regular: true, symlink: false },
+    });
+    if (!trusted.pass) throw new Error("active dispatch requires trusted acceptance evidence");
+  }
+  const policy = dispatchMode === null ? null : createDispatchPolicy(
+    dispatchMode === "active"
+      ? { mode: "active", allowTypedBridge: false, activation: { installId, manifestPath } }
+      : { mode: "shadow", allowTypedBridge: false, activation: null },
+  );
+  const policySource = policy === null ? null : serializeDispatchPolicy(policy);
+  const policyTarget = join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH);
+  if (policySource !== null) await readManagedPolicyTarget(policyTarget);
   const backupDirectory = join(
     CODEX_HOME,
     "backups",
@@ -975,6 +1551,15 @@ async function installAfterSmoke(smoke) {
   const configSource = await readFile(configPath, "utf8");
   const agentsSource = await readFile(agentsPath, "utf8");
   const configTarget = renderConfig(configSource, CODEX_HOME, { promoteV2: true });
+  const configRollbackState = captureConfigRollbackState(configSource);
+  const rollbackPreview = restoreConfigRollbackState(configTarget, {
+    rollbackState: configRollbackState,
+    expectedSha256: sha256(configSource),
+    codexHome: CODEX_HOME,
+  });
+  if (!rollbackPreview.exact || rollbackPreview.source !== configSource) {
+    throw new Error("Config rollback preflight failed");
+  }
   const agentsTarget = renderAgentsMd(agentsSource);
   const configMode = (await stat(configPath)).mode & 0o777;
   const agentsMode = (await stat(agentsPath)).mode & 0o777;
@@ -1001,10 +1586,23 @@ async function installAfterSmoke(smoke) {
     sourcePath: join(REPO_ROOT, "scripts", "codex-typed-agent"),
     targetPath: launcherPath,
     afterSha256: sha256(launcherSource),
+    sourceSha256: sha256(launcherSource),
+    targetSha256: sha256(launcherSource),
+    mode: 0o755,
     backup: launcherBackup,
   });
+  let dispatchInstall = null;
+  if (policySource !== null) {
+    dispatchInstall = await installDispatchRuntime({
+      sourceRoot: REPO_ROOT,
+      codexHome: CODEX_HOME,
+      backupDirectory,
+      dispatchMode,
+      dispatchPolicy: policy,
+    });
+    fileEntries.push(...dispatchInstall.files);
+  }
 
-  const manifestPath = join(reportDirectory, "install-manifest.json");
   const manifest = {
     schemaVersion: 1,
     timestamp: runTimestamp,
@@ -1012,11 +1610,19 @@ async function installAfterSmoke(smoke) {
     status: "applying",
     smokeReportDirectory: smoke.reportDirectory ?? null,
     smokeEvidence: smoke.reuse ?? { mode: "fresh_smoke" },
+    activation: dispatchMode === "active" ? {
+      installId,
+      manifestPath,
+      repositoryRoot: REPO_ROOT,
+      policySha256: policy.sha256,
+      acceptanceBindingSha256: acceptance.runtimeBinding.sha256,
+    } : null,
     config: {
       path: configPath,
       beforeSha256: sha256(configSource),
       afterSha256: sha256(configTarget),
       mode: configMode,
+      rollbackState: configRollbackState,
       managedMarkers: [
         CONFIG_LEGACY_THREADS_MARKER,
         CONFIG_ROLES_MARKER,
@@ -1033,15 +1639,20 @@ async function installAfterSmoke(smoke) {
     },
     files: fileEntries,
   };
-  await writeJson(manifestPath, manifest);
 
+  let manifestPersisted = false;
   try {
+    await writeJson(manifestPath, manifest);
+    manifestPersisted = true;
     for (const entry of fileEntries) {
-      const source = await readFile(entry.sourcePath, "utf8");
+      if (entry.kind.startsWith("dispatch-")) continue;
+      const source = entry.kind === "dispatch-policy"
+        ? policySource
+        : await readFile(entry.sourcePath, "utf8");
       await atomicWrite(
         entry.targetPath,
         source,
-        entry.kind === "launcher" ? 0o755 : 0o644,
+        entry.mode ?? (entry.kind === "launcher" ? 0o755 : 0o644),
       );
     }
     await atomicWrite(agentsPath, agentsTarget, agentsMode);
@@ -1058,17 +1669,19 @@ async function installAfterSmoke(smoke) {
       mcpConfig: doctorJson?.checks?.["mcp.config"]?.status === "ok",
       installation: doctorJson?.checks?.installation?.status === "ok",
     };
+    manifest.staticChecks = staticChecks;
+    await writeJson(manifestPath, manifest);
     if (!Object.values(staticChecks).every(Boolean)) {
       throw new Error("Post-install static checks failed");
     }
 
-    const rootSmoke = await postInstallRootSmoke();
+    const rootSmoke = await postInstallRootSmoke({ active: dispatchMode === "active" });
+    manifest.postInstallRootSmoke = rootSmoke;
+    await writeJson(manifestPath, manifest);
     if (!rootSmoke.pass) throw new Error("Post-install fresh-root smoke failed");
 
     manifest.status = "applied";
     manifest.completedAt = new Date().toISOString();
-    manifest.staticChecks = staticChecks;
-    manifest.postInstallRootSmoke = rootSmoke;
     await writeJson(manifestPath, manifest);
     await atomicWrite(
       join(reportDirectory, "result.md"),
@@ -1076,10 +1689,14 @@ async function installAfterSmoke(smoke) {
     );
     return { manifestPath, manifest };
   } catch (error) {
-    await rollbackFromManifest(manifestPath, {
-      force: true,
-      reason: error.message,
-    });
+    if (manifestPersisted) {
+      await rollbackFromManifest(manifestPath, {
+        force: true,
+        reason: error.message,
+      });
+    } else if (dispatchInstall !== null) {
+      await rollbackDispatchRuntime({ manifest: dispatchInstall, force: true });
+    }
     throw error;
   }
 }
@@ -1132,7 +1749,10 @@ async function cleanupSmokeProjects(manifestPath) {
   return manifest.postApplyCleanup;
 }
 
-async function dryRunApply() {
+export async function dryRunApply({ dispatchMode = null } = {}) {
+  if (dispatchMode !== null && !["shadow", "active"].includes(dispatchMode)) {
+    throw new Error("dispatch mode must be shadow or active");
+  }
   const doctor = await runDoctor();
   const configPath = join(CODEX_HOME, "config.toml");
   const agentsPath = join(CODEX_HOME, "AGENTS.md");
@@ -1140,6 +1760,27 @@ async function dryRunApply() {
   const agentsSource = await readFile(agentsPath, "utf8");
   const configTarget = renderConfig(configSource, CODEX_HOME, { promoteV2: true });
   const agentsTarget = renderAgentsMd(agentsSource);
+  const dispatch = dispatchMode === null ? null : (() => {
+    const policy = dispatchMode === "active"
+      ? createDispatchPolicy({ mode: "active", allowTypedBridge: false, activation: { installId: "preview", manifestPath: join(REPO_ROOT, "reports", "preview", "install-manifest.json") } })
+      : createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null });
+    const policySource = serializeDispatchPolicy(policy);
+    return {
+      mode: policy.mode,
+      policySha256: sha256(policySource),
+      runtime: DISPATCH_RUNTIME_FILES.map((path) => ({ path, sha256: null })),
+      wrapper: { path: "scripts/gearbox-dispatch", sha256: null },
+      acceptanceRequired: dispatchMode === "active",
+      acceptanceValidated: false,
+    };
+  })();
+  if (dispatch !== null) {
+    await readManagedPolicyTarget(join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH));
+    for (const entry of dispatch.runtime) {
+      entry.sha256 = sha256(await readFile(join(REPO_ROOT, entry.path), "utf8"));
+    }
+    dispatch.wrapper.sha256 = sha256(await readFile(join(REPO_ROOT, dispatch.wrapper.path), "utf8"));
+  }
   return {
     pass: doctor.pass,
     doctor,
@@ -1155,6 +1796,7 @@ async function dryRunApply() {
         changed: agentsSource !== agentsTarget,
       },
       installedRoleCount: ROLE_SPECS.length,
+      dispatch,
       secretsCopiedToReport: false,
     },
   };
@@ -1170,8 +1812,9 @@ function usage() {
   process.stderr.write(`Usage:
   node scripts/gearbox.mjs doctor [--json]
   node scripts/gearbox.mjs smoke --all
+  node scripts/gearbox.mjs acceptance --all
   node scripts/gearbox.mjs smoke-sdd
-  node scripts/gearbox.mjs apply --promote-v2 [--dry-run] [--reuse-smoke <reports/.../smoke.json>]
+  node scripts/gearbox.mjs apply --promote-v2 [--dry-run] [--dispatch-mode shadow|active] [--reuse-smoke <reports/.../smoke.json>] [--reuse-acceptance <reports/.../acceptance.json>]
   node scripts/gearbox.mjs cleanup-smoke-projects --manifest <path>
   node scripts/gearbox.mjs rollback --manifest <path> [--force]
 `);
@@ -1208,6 +1851,15 @@ async function main() {
     return;
   }
 
+  if (command === "acceptance") {
+    if (!args.includes("--all")) throw new Error("acceptance requires --all");
+    const report = await runAcceptanceAll();
+    process.stdout.write(`GEARBOX_ACCEPTANCE_${report.pass ? "PASS" : "FAIL"}\n`);
+    process.stdout.write(`REPORT ${report.reportDirectory}\n`);
+    if (!report.pass) process.exitCode = 1;
+    return;
+  }
+
   if (command === "smoke-sdd") {
     const report = await runSddAdapterProbe();
     process.stdout.write(`GEARBOX_SDD_${report.pass ? "PASS" : "FAIL"}\n`);
@@ -1220,8 +1872,12 @@ async function main() {
     if (!args.includes("--promote-v2")) {
       throw new Error("apply requires --promote-v2");
     }
+    const dispatchMode = optionValue(args, "--dispatch-mode");
+    if (args.includes("--dispatch-mode") && !dispatchMode) {
+      throw new Error("--dispatch-mode requires a mode");
+    }
     if (args.includes("--dry-run")) {
-      const report = await dryRunApply();
+      const report = await dryRunApply({ dispatchMode });
       process.stdout.write(`${JSON.stringify(redactSensitive(report), null, 2)}\n`);
       if (!report.pass) process.exitCode = 1;
       return;
@@ -1240,7 +1896,20 @@ async function main() {
         `${smoke.expectedRoleCount}-role smoke failed; global config was not changed. Report: ${smoke.reportDirectory}`,
       );
     }
-    const result = await installAfterSmoke(smoke);
+    const reuseAcceptancePath = optionValue(args, "--reuse-acceptance");
+    if (args.includes("--reuse-acceptance") && !reuseAcceptancePath) {
+      throw new Error("--reuse-acceptance requires a report path");
+    }
+    if (reuseAcceptancePath && dispatchMode !== "active") {
+      throw new Error("--reuse-acceptance requires --dispatch-mode active");
+    }
+    const acceptance = dispatchMode === "active"
+      ? (reuseAcceptancePath ? await loadTrustedAcceptance(reuseAcceptancePath) : await runAcceptanceAll({ roleSmoke: smoke }))
+      : null;
+    if (dispatchMode === "active" && !acceptance.pass) {
+      throw new Error("Acceptance exam failed; global config was not changed");
+    }
+    const result = await installAfterSmoke(smoke, { dispatchMode, acceptance });
     process.stdout.write("GEARBOX_APPLY_PASS\n");
     process.stdout.write(`MANIFEST ${result.manifestPath}\n`);
     return;
@@ -1269,7 +1938,9 @@ async function main() {
   process.exitCode = 2;
 }
 
-main().catch((error) => {
-  process.stderr.write(`GEARBOX_ERROR ${error.message}\n`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && resolve(process.argv[1]) === SCRIPT_PATH) {
+  main().catch((error) => {
+    process.stderr.write(`GEARBOX_ERROR ${error.message}\n`);
+    process.exitCode = 1;
+  });
+}

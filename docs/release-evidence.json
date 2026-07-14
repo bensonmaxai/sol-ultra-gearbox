@@ -1,37 +1,52 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-13T14:28:05.437Z",
+  "generatedAt": "2026-07-14T00:06:23.583Z",
   "source": {
     "algorithm": "sha256",
-    "fileCount": 38,
-    "sha256": "046a093de861e5b16037ac7e256ca18c610940f99fd0f4eafb6f5f4879d8aaa4",
-    "commit": "fda2bfd9562844b886eb7f3ab8035afcf50b6c5e"
+    "fileCount": 58,
+    "sha256": "864488472c0dd1e440dac56e11d8d0d6c4dea1904021a8d31ecec3b1e4360c21",
+    "commit": "0020bc31907dcc416bb0da95d7ad159c62ce2ab3"
   },
   "tests": {
     "status": "pass",
     "command": "node --test --test-reporter=tap",
-    "total": 48,
-    "passed": 48,
+    "total": 129,
+    "passed": 129,
     "failed": 0
   },
   "runtime": {
+    "activation": {
+      "status": "pass",
+      "mode": "active",
+      "integrity": "pass",
+      "allowTypedBridge": false,
+      "installId": "gearbox-20260713235647",
+      "policySha256": "0140b1ec85943b11310f42463606b109d4e52247be30ff37105c107d4359497c",
+      "preInstallConfigSha256": "b18f26faa459bc2c14b343906c75bb5e6d964ff49d53d92f6ffd0913261a2928",
+      "activeConfigSha256": "ca9c41de6987f63210d1ecc86f6de4740da6d85fba654a0843d408c8f8bd007a",
+      "root": {
+        "persisted": true,
+        "model": "gpt-5.6-sol",
+        "effort": "max"
+      }
+    },
     "roleSmoke": {
       "status": "pass",
-      "generatedAt": "2026-07-13T13:56:53.930Z",
+      "generatedAt": "2026-07-13T23:54:29.491Z",
       "expectedRoleCount": 6,
       "passedRoleCount": 6,
       "rootVerified": true,
-      "commit": "47d5191b599d6fe0f62e79ca0772dc5d27873f6f",
-      "validatedAtCommit": "fda2bfd9562844b886eb7f3ab8035afcf50b6c5e",
-      "runtimeBindingSha256": "03cd3563f2aff5757cafa3d27d40bb391c9e465622a209671fc50640e5c992b0",
+      "commit": "bf69f35c6ac581b049d4c34e0ccc8a801dff1a85",
+      "validatedAtCommit": "0020bc31907dcc416bb0da95d7ad159c62ce2ab3",
+      "runtimeBindingSha256": "fdbd3636d6911ccd9b5e52402a4eb7e7733201621f51be58287f163a80219ee4",
       "roles": [
         {
           "role": "luna_clerk",
           "model": "gpt-5.6-luna",
           "effort": "low",
           "sandbox": "read-only",
-          "parentTokens": 40334,
-          "childTokens": 26829,
+          "parentTokens": 54603,
+          "childTokens": 40693,
           "pass": true
         },
         {
@@ -39,8 +54,8 @@
           "model": "gpt-5.6-terra",
           "effort": "medium",
           "sandbox": "read-only",
-          "parentTokens": 40871,
-          "childTokens": 27160,
+          "parentTokens": 40408,
+          "childTokens": 26838,
           "pass": true
         },
         {
@@ -48,8 +63,8 @@
           "model": "gpt-5.6-terra",
           "effort": "high",
           "sandbox": "workspace-write",
-          "parentTokens": 41510,
-          "childTokens": 56477,
+          "parentTokens": 41493,
+          "childTokens": 71615,
           "pass": true
         },
         {
@@ -57,8 +72,8 @@
           "model": "gpt-5.6-sol",
           "effort": "high",
           "sandbox": "read-only",
-          "parentTokens": 40347,
-          "childTokens": 41164,
+          "parentTokens": 40364,
+          "childTokens": 55208,
           "pass": true
         },
         {
@@ -66,8 +81,8 @@
           "model": "gpt-5.6-terra",
           "effort": "ultra",
           "sandbox": "workspace-write",
-          "parentTokens": 41345,
-          "childTokens": 42042,
+          "parentTokens": 41462,
+          "childTokens": 27778,
           "pass": true
         },
         {
@@ -75,24 +90,37 @@
           "model": "gpt-5.6-terra",
           "effort": "max",
           "sandbox": "workspace-write",
-          "parentTokens": 41804,
-          "childTokens": 57052,
+          "parentTokens": 41359,
+          "childTokens": 73344,
           "pass": true
         }
       ]
     },
     "sddAdapter": {
       "status": "pass",
-      "generatedAt": "2026-07-13T13:58:54.806Z",
+      "generatedAt": "2026-07-13T23:51:01.467Z",
       "phases": [
         "terra_worker",
         "sol_reviewer"
       ],
       "permissionStrategy": "sequential_isolated_roots",
       "verification": "adapter_contract",
-      "commit": "47d5191b599d6fe0f62e79ca0772dc5d27873f6f",
-      "validatedAtCommit": "fda2bfd9562844b886eb7f3ab8035afcf50b6c5e",
-      "runtimeBindingSha256": "03cd3563f2aff5757cafa3d27d40bb391c9e465622a209671fc50640e5c992b0"
+      "commit": "bf69f35c6ac581b049d4c34e0ccc8a801dff1a85",
+      "validatedAtCommit": "0020bc31907dcc416bb0da95d7ad159c62ce2ab3",
+      "runtimeBindingSha256": "fdbd3636d6911ccd9b5e52402a4eb7e7733201621f51be58287f163a80219ee4"
+    },
+    "acceptanceExam": {
+      "pass": true,
+      "generatedAt": "2026-07-13T23:56:47.872Z",
+      "questionCount": 10,
+      "passedQuestionCount": 10,
+      "executionShapes": [
+        "isolated_role_root",
+        "root_inline",
+        "typed_child"
+      ],
+      "activeEligible": true,
+      "runtimeBindingSha256": "fdbd3636d6911ccd9b5e52402a4eb7e7733201621f51be58287f163a80219ee4"
     }
   },
   "costEvidence": {
@@ -172,5 +200,5 @@
     "coreRuntimeHook": "out_of_scope",
     "costEstimator": "gated_until_10_complete_pairs"
   },
-  "renderedMarkdownSha256": "65a2a4ff461be284d7c5f8519cdedd2c1b68b2997613b7dccdffeb9054b591a1"
+  "renderedMarkdownSha256": "9def6036462c906459b9ee210d05d69193c230a691dd701dbe969f38ab61b692"
 }

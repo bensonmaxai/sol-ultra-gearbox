@@ -7,7 +7,9 @@ criteria.
 
 The compatibility gate runs immediately before an actual `spawn_agent` call or
 equivalent dispatch intent. Merely mentioning subagents, multi-agent work, or
-spawn behavior does not trigger it.
+spawn behavior does not trigger it. Supported actual delegation must first run
+`gearbox-dispatch plan` with the self-contained packet and current schema plus
+parent-permission facts. Quality passes before cost is considered.
 
 ## Pre-spawn compatibility gate
 
@@ -24,16 +26,22 @@ Apply these checks in order and stop at the first failure:
    different task.
 5. Translate the requested responsibility to an installed typed role.
 6. Confirm the current spawn schema exposes `agent_type` and that parent
-   permissions match the role sandbox.
+   permissions match the role sandbox. A read-only Luna/Terra mismatch may use
+   `isolated_role_root` through `gearbox-dispatch run-isolated`; it is an
+   isolated root, never a child. A writer mismatch stays root-inline.
 7. Spawn with `agent_type`, `fork_turns="none"`, a self-contained message, and
    no model, reasoning-effort, or service-tier override.
 8. Keep at most two direct children active, depth 1, no descendants, and one
    writer with an exclusive scope.
+   Configure three MultiAgentV2 session slots because the root consumes one;
+   the behavioral limit remains two direct children.
 9. Integrate, verify, close the child, and report persisted runtime identity as
    unverified when metadata is unavailable.
 
 Generic `default`, `general-purpose`, `worker`, and `reviewer` agent types are
 not Gearbox fallbacks. A missing or generic `agent_type` fails the gate.
+`typed_child_bridge` is disabled for first activation with
+`allowTypedBridge=false`; do not substitute it for a parent-permission mismatch.
 
 ## Generic responsibility mapping
 
@@ -101,3 +109,14 @@ sequential isolated root phases so each child receives the exact required
 sandbox. It proves typed runtime identity, handoff order, and filesystem scope;
 it does not prove that arbitrary third-party skill code is intercepted below
 the instruction layer.
+
+## Active failure boundary
+
+`off` makes no automatic routing decision; `shadow` records a plan but keeps
+execution in Sol; `active` executes only validated results. First active mode
+requires trusted current ten-question acceptance evidence and an applied
+manifest. One correction is allowed only for a concrete local output defect.
+On a hard active failure, stop delegation; dispatch status and public evidence
+redact the manifest path, and only the managed rollback command may consume it
+to change global state. Do not publish a savings percentage before ten
+comparable root-inclusive real-work pairs exist.
