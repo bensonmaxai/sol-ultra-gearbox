@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  APP_SERVER_ROOT_HISTORY_MODE,
   APP_SERVER_ROOT_SMOKE_MARKER,
   createAppServerRootSmokePacket,
   deriveAppServerRootCapabilities,
@@ -116,6 +117,18 @@ lines.on("line", async (line) => {
     }
   });
   if (value.method === "thread/start") {
+    if (value.params.historyMode !== "legacy") {
+      return send({ id: value.id, error: {
+        code: -32601,
+        message: "paginated_threads is not supported yet",
+      } });
+    }
+    if (process.env.TEST_REJECT_THREAD_START) {
+      return send({ id: value.id, error: {
+        code: -32601,
+        message: "fixture private thread/start rejection",
+      } });
+    }
     if (process.env.TEST_THREAD_START_MARKER) {
       await writeFile(process.env.TEST_THREAD_START_MARKER, "started\\n");
     }
@@ -213,6 +226,7 @@ test("built-in provider smoke is a deterministic Sol Low read-only turn", () => 
   assert.equal(decision.selectedShape, "app_server_root");
   assert.equal(decision.routing.root.model, "gpt-5.6-sol");
   assert.equal(decision.routing.root.effort, "low");
+  assert.equal(APP_SERVER_ROOT_HISTORY_MODE, "legacy");
 });
 
 test("foreground App Server root verifies route, rollout, scope, and close evidence", async (t) => {
@@ -345,6 +359,40 @@ test("unsupported App Server version falls back before thread start", async (t) 
   assert.equal(result.decision.selectedShape, "root_inline");
   assert.equal(result.decision.provider.reasonCode, "APP_SERVER_ROOT_HOST_UNAVAILABLE");
   await assert.rejects(stat(marker), /ENOENT/);
+});
+
+test("thread/start rejection preserves a concrete privacy-safe failure", async (t) => {
+  const { cwd, codexHome, fake } = await fixture(t);
+  const result = await runAppServerRoot({
+    policy: policy(codexHome),
+    packet: packet(),
+    cwd,
+    codexHome,
+    serverCommand: [process.execPath, fake],
+    requestTimeoutMs: 5_000,
+    turnTimeoutMs: 5_000,
+    environment: {
+      ...process.env,
+      TEST_CODEX_HOME: codexHome,
+      TEST_CWD: cwd,
+      TEST_REJECT_THREAD_START: "1",
+    },
+  });
+  assert.equal(result.status, "fail");
+  assert.equal(result.receipt.value.reasonCode, "APP_SERVER_ROOT_THREAD_START_REJECTED");
+  assert.equal(result.receipt.value.lifecycle.initialized, true);
+  assert.equal(result.receipt.value.lifecycle.threadStarted, false);
+  assert.equal(result.receipt.value.lifecycle.turnStarted, false);
+  assert.equal(result.receipt.value.diagnostics.failureStage, "thread_start");
+  assert.equal(result.receipt.value.diagnostics.serverErrorCode, -32601);
+  assert.equal(
+    result.receipt.value.diagnostics.serverErrorMessageSha256,
+    sha256("fixture private thread/start rejection"),
+  );
+  assert.doesNotMatch(
+    await readFile(result.receipt.path, "utf8"),
+    /fixture private thread\/start rejection/,
+  );
 });
 
 test("a SIGTERM-resistant provider returns a bounded lifecycle failure receipt", async (t) => {
