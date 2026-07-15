@@ -16,8 +16,9 @@ unknown-version, hash-mismatched, or unmanaged policy is `off`.
 | `shadow` | Calculate and record the decision, but the Sol root executes it. |
 | `active` | Execute only a decision that passes every managed gate. |
 
-First activation requires trusted current ten-question acceptance evidence and
-an applied activation manifest. It must set `allowTypedBridge=false`.
+First activation requires trusted current ten-question acceptance evidence, a
+persistent managed activation record, and an applied local rollback manifest.
+It must set `allowTypedBridge=false`.
 `typed_child_bridge` remains unavailable unless a future, explicitly enabled
 capability has its own verified runtime evidence.
 
@@ -34,7 +35,7 @@ rejection.
 5. `typed_child`: Sol calls `spawn_agent` with exact typed arguments, persists the receipt, collects evidence, mechanically verifies it, explicitly adopts it, and only then closes the provider.
 6. `isolated_role_root`: run `gearbox-dispatch run-isolated`; it is an isolated root, never a child.
 7. Reject missing or mismatched evidence before integration.
-8. On a hard active-mode failure, stop delegation and use the hash-bound policy activation manifest with the managed rollback command.
+8. On a hard active-mode failure, stop delegation and use the hash-bound local rollback manifest with the managed rollback command.
 9. Sol integrates, runs final relevant tests, records the privacy-safe outcome, and cleans the packet.
 
 Direct bounded packet-v1 work keeps this routing behavior. For a validated DAG,
@@ -76,9 +77,10 @@ cleanup, policy, ambiguity, hidden-coupling, or security failure receives no
 retry.
 
 After a hard active-mode failure, stop delegation for the task. Active status
+reads the private managed record beneath `$CODEX_HOME/gearbox/activations/` and
 verifies managed configuration, AGENTS, role, launcher, runtime, and wrapper
-hashes and modes, while status and public evidence redact the activation
-manifest path. Only the managed rollback command may consume that manifest to
+hashes and modes without repository reports. Status and public evidence redact
+both record and manifest paths. Only the managed rollback command may consume the local manifest to
 alter global state. Do not publish a savings percentage or estimator until ten
 comparable root-inclusive real-work pairs exist.
 

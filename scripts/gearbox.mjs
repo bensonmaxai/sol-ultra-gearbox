@@ -31,6 +31,7 @@ import {
   MULTI_AGENT_SESSION_THREADS,
   RUNTIME_BINDING_FILES,
   ROLE_SPECS,
+  activeActivationRecordPath,
   atomicWrite,
   backupFile,
   captureConfigRollbackState,
@@ -39,9 +40,11 @@ import {
   findProbeRollouts,
   hashTree,
   installDispatchRuntime,
+  persistActiveActivationRecord,
   readOptional,
   readCurrentWorkflowContractEvidence,
   redactSensitive,
+  removeActiveActivationRecord,
   removeOwnedSmokeProjectEntries,
   renderAgentsMd,
   renderConfig,
@@ -53,6 +56,7 @@ import {
   validateTypedSpawnArgs,
   validatePostInstallRootRuntime,
   validateRoleText,
+  verifyActiveActivationRecordForRemoval,
   verifyProbe,
   writeJson,
 } from "../lib/gearbox.mjs";
@@ -1755,6 +1759,18 @@ async function rollbackFromManifest(manifestPath, { force = false, reason = null
     return manifest;
   }
   const agentsPath = manifest.agents.path;
+  let activationRecordState = null;
+  if (manifest.activation?.recordPath !== undefined) {
+    activationRecordState = await verifyActiveActivationRecordForRemoval({
+      codexHome: CODEX_HOME,
+      activation: manifest.activation,
+      expectedSha256: manifest.activation.recordSha256 ?? null,
+    });
+    if (activationRecordState.exists &&
+      !/^[a-f0-9]{64}$/.test(manifest.activation.recordSha256 ?? "")) {
+      throw new Error("activation manifest is missing its record hash");
+    }
+  }
   const currentConfig = await readFile(configPath, "utf8");
   const currentAgents = await readFile(agentsPath, "utf8");
   if (!force && manifest.config.afterSha256 && sha256(currentConfig) !== manifest.config.afterSha256) {
@@ -1821,6 +1837,13 @@ async function rollbackFromManifest(manifestPath, { force = false, reason = null
     });
     actions.push({ path: join(CODEX_HOME, "gearbox", "runtime"), action: "dispatch_runtime_restored" });
   }
+  if (activationRecordState?.exists) {
+    actions.push(await removeActiveActivationRecord({
+      codexHome: CODEX_HOME,
+      activation: manifest.activation,
+      expectedSha256: manifest.activation.recordSha256,
+    }));
+  }
   manifest.status = reason ? "failed_rolled_back" : "rolled_back";
   manifest.rollback = {
     at: new Date().toISOString(),
@@ -1861,6 +1884,9 @@ async function installAfterSmoke(
   const reportDirectory = join(REPO_ROOT, "reports", `${runTimestamp}-apply`);
   const manifestPath = join(reportDirectory, "install-manifest.json");
   const installId = `gearbox-${runTimestamp}`;
+  const recordPath = dispatchMode === "active"
+    ? activeActivationRecordPath(CODEX_HOME, installId)
+    : null;
   if (dispatchMode === "active") {
     const trusted = validateTrustedAcceptance({
       report: acceptance,
@@ -1874,7 +1900,7 @@ async function installAfterSmoke(
   }
   const policy = dispatchMode === null ? null : createDispatchPolicy(
     dispatchMode === "active"
-      ? { mode: "active", allowTypedBridge: false, activation: { installId, manifestPath } }
+      ? { mode: "active", allowTypedBridge: false, activation: { installId, recordPath } }
       : { mode: "shadow", allowTypedBridge: false, activation: null },
   );
   const policySource = policy === null ? null : serializeDispatchPolicy(policy);
@@ -1962,6 +1988,7 @@ async function installAfterSmoke(
     smokeEvidence: smoke.reuse ?? { mode: "fresh_smoke" },
     activation: dispatchMode === "active" ? {
       installId,
+      recordPath,
       manifestPath,
       repositoryRoot: REPO_ROOT,
       policySha256: policy.sha256,
@@ -1994,6 +2021,7 @@ async function installAfterSmoke(
   };
 
   let manifestPersisted = false;
+  let persistedActivationRecord = null;
   try {
     await writeJson(manifestPath, manifest);
     manifestPersisted = true;
@@ -2035,6 +2063,14 @@ async function installAfterSmoke(
 
     manifest.status = "applied";
     manifest.completedAt = new Date().toISOString();
+    if (dispatchMode === "active") {
+      persistedActivationRecord = await persistActiveActivationRecord({
+        codexHome: CODEX_HOME,
+        manifest,
+        policy,
+      });
+      manifest.activation.recordSha256 = persistedActivationRecord.sha256;
+    }
     await writeJson(manifestPath, manifest);
     await atomicWrite(
       join(reportDirectory, "result.md"),
@@ -2042,6 +2078,18 @@ async function installAfterSmoke(
     );
     return { manifestPath, manifest };
   } catch (error) {
+    let activationCleanupError = null;
+    if (persistedActivationRecord !== null) {
+      try {
+        await removeActiveActivationRecord({
+          codexHome: CODEX_HOME,
+          activation: manifest.activation,
+          expectedSha256: persistedActivationRecord.sha256,
+        });
+      } catch (cleanupError) {
+        activationCleanupError = cleanupError;
+      }
+    }
     if (manifestPersisted) {
       await rollbackFromManifest(manifestPath, {
         force: true,
@@ -2049,6 +2097,12 @@ async function installAfterSmoke(
       });
     } else if (dispatchInstall !== null) {
       await rollbackDispatchRuntime({ manifest: dispatchInstall, force: true });
+    }
+    if (activationCleanupError !== null) {
+      throw new AggregateError(
+        [error, activationCleanupError],
+        "Active apply failed and activation record cleanup also failed",
+      );
     }
     throw error;
   }
@@ -2129,7 +2183,7 @@ export async function dryRunApply({
   const agentsTarget = renderAgentsMd(agentsSource);
   const dispatch = dispatchMode === null ? null : (() => {
     const policy = dispatchMode === "active"
-      ? createDispatchPolicy({ mode: "active", allowTypedBridge: false, activation: { installId: "preview", manifestPath: join(REPO_ROOT, "reports", "preview", "install-manifest.json") } })
+      ? createDispatchPolicy({ mode: "active", allowTypedBridge: false, activation: { installId: "preview", recordPath: activeActivationRecordPath(CODEX_HOME, "preview") } })
       : createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null });
     const policySource = serializeDispatchPolicy(policy);
     return {

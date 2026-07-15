@@ -18,6 +18,17 @@ function activePolicy() {
     allowTypedBridge: false,
     activation: {
       installId: "20260714-example",
+      recordPath: "/tmp/example/gearbox/activations/20260714-example.json",
+    },
+  });
+}
+
+function legacyActivePolicy() {
+  return createDispatchPolicy({
+    mode: "active",
+    allowTypedBridge: false,
+    activation: {
+      installId: "20260714-legacy",
       manifestPath: "/tmp/example/reports/install-manifest.json",
     },
   });
@@ -56,12 +67,25 @@ test("validation rejects fields and modes outside the integrity schema", () => {
     { ...policy, extra: true },
     { ...policy, mode: "preview" },
     { ...policy, allowTypedBridge: true },
-    { ...policy, activation: { ...policy.activation, manifestPath: "relative.json" } },
+    { ...policy, activation: { ...policy.activation, recordPath: "relative.json" } },
+    {
+      ...policy,
+      activation: {
+        ...policy.activation,
+        manifestPath: "/tmp/example/reports/install-manifest.json",
+      },
+    },
     { ...policy, activation: null },
     createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null }),
   ];
-  cases[5] = { ...cases[5], activation: policy.activation };
+  cases[6] = { ...cases[6], activation: policy.activation };
   for (const value of cases) assert.equal(validateDispatchPolicy(value).pass, false);
+});
+
+test("legacy manifest activation remains readable during the re-activation gap", () => {
+  const policy = legacyActivePolicy();
+  assert.equal(validateDispatchPolicy(policy).pass, true);
+  assert.deepEqual(assertManagedPolicyTarget(serializeDispatchPolicy(policy)), policy);
 });
 
 test("missing, malformed, and tampered policy files resolve off", async () => {

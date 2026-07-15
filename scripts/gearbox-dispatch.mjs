@@ -2,8 +2,9 @@
 
 import { lstat, mkdir, mkdtemp, readdir, realpath, readFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
+  activeActivationRecordPath,
   atomicWrite,
   cleanupProbeArtifacts,
   DISPATCH_RUNTIME_FILES,
@@ -12,6 +13,7 @@ import {
   redactSensitive,
   sha256,
   validatePostInstallRootRuntime,
+  validateActiveActivationRecord,
 } from "../lib/gearbox.mjs";
 import { planDispatch } from "../lib/dispatch-planner.mjs";
 import { validateDispatchResult } from "../lib/dispatch-evidence.mjs";
@@ -21,6 +23,9 @@ import { readOwnedPacket } from "../lib/owned-packet.mjs";
 import { runWorkflowNext, workflowOutputIsUnsafe } from "../lib/workflow-cli.mjs";
 
 const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), ".codex");
+const LEGACY_DISPATCH_RUNTIME_FILES = Object.freeze(
+  DISPATCH_RUNTIME_FILES.filter((path) => path !== "docs/workflow-contract-evidence.json"),
+);
 
 function off() {
   return { status: "GEARBOX_DISPATCH_OFF", mode: "off" };
@@ -83,7 +88,132 @@ async function dispatchPolicy() {
   return loadDispatchPolicy(join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH));
 }
 
-async function activeManifestEvidence(policy) {
+async function activeRecordEvidence(policy) {
+  const activation = policy?.activation;
+  try {
+    if (policy?.mode !== "active" || policy?.allowTypedBridge !== false ||
+      typeof activation?.recordPath !== "string") return null;
+    const recordPath = activeActivationRecordPath(CODEX_HOME, activation.installId);
+    if (activation.recordPath !== recordPath) return null;
+    const [directoryMetadata, metadata] = await Promise.all([
+      lstat(dirname(recordPath)),
+      lstat(recordPath),
+    ]);
+    const physicalCodexHome = await realpath(CODEX_HOME);
+    const physicalRecordPath = await realpath(recordPath);
+    const expectedPhysicalRecordPath = join(
+      physicalCodexHome,
+      relative(CODEX_HOME, recordPath),
+    );
+    if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink() ||
+      (directoryMetadata.mode & 0o777) !== 0o700 ||
+      !metadata.isFile() || metadata.isSymbolicLink() ||
+      (metadata.mode & 0o777) !== 0o600 ||
+      physicalRecordPath !== expectedPhysicalRecordPath) return null;
+    const recordSource = await readFile(recordPath, "utf8");
+    const record = JSON.parse(recordSource);
+    if (!validateActiveActivationRecord(record, { codexHome: CODEX_HOME, policy }).pass) return null;
+
+    const installedDigest = async (path, mode, expectedHash) => {
+      const installed = await lstat(path);
+      if (!installed.isFile() || installed.isSymbolicLink() ||
+        (installed.mode & 0o777) !== mode) return null;
+      const digest = sha256(await readFile(path));
+      return digest === expectedHash ? digest : null;
+    };
+
+    const configSha256 = await installedDigest(
+      record.config.path,
+      record.config.mode,
+      record.config.afterSha256,
+    );
+    const agentsSha256 = await installedDigest(
+      record.agents.path,
+      record.agents.mode,
+      record.agents.afterSha256,
+    );
+    if (configSha256 === null || agentsSha256 === null) return null;
+
+    const roleFiles = record.files.filter((entry) => entry.kind === "role");
+    if (roleFiles.length !== ROLE_SPECS.length) return null;
+    const roleHashes = {};
+    for (const spec of ROLE_SPECS) {
+      const targetPath = join(CODEX_HOME, "agents", spec.installFile);
+      const matches = roleFiles.filter((entry) =>
+        entry.role === spec.name && entry.targetPath === targetPath && entry.mode === 0o644,
+      );
+      if (matches.length !== 1) return null;
+      const digest = await installedDigest(targetPath, 0o644, matches[0].afterSha256);
+      if (digest === null) return null;
+      roleHashes[spec.name] = digest;
+    }
+
+    const launcherPath = join(CODEX_HOME, "bin", "codex-typed-agent");
+    const launcherFiles = record.files.filter((entry) =>
+      entry.kind === "launcher" && entry.targetPath === launcherPath && entry.mode === 0o755,
+    );
+    if (launcherFiles.length !== 1) return null;
+    const launcherSha256 = await installedDigest(
+      launcherPath,
+      0o755,
+      launcherFiles[0].afterSha256,
+    );
+    if (launcherSha256 === null) return null;
+
+    const expected = [
+      {
+        kind: "dispatch-policy",
+        targetPath: join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH),
+        mode: 0o600,
+        publicPath: null,
+      },
+      ...DISPATCH_RUNTIME_FILES.map((path) => ({
+        kind: "dispatch-runtime",
+        targetPath: join(CODEX_HOME, "gearbox", "runtime", path),
+        mode: 0o644,
+        publicPath: path,
+      })),
+      {
+        kind: "dispatch-wrapper",
+        targetPath: join(CODEX_HOME, "bin", "gearbox-dispatch"),
+        mode: 0o755,
+        publicPath: "scripts/gearbox-dispatch",
+      },
+    ];
+    const dispatchFiles = record.files.filter((entry) => entry.kind.startsWith("dispatch-"));
+    if (dispatchFiles.length !== expected.length) return null;
+    const runtimeHashes = {};
+    for (const wanted of expected) {
+      const matches = dispatchFiles.filter((entry) =>
+        entry.kind === wanted.kind && entry.targetPath === wanted.targetPath && entry.mode === wanted.mode,
+      );
+      if (matches.length !== 1) return null;
+      const entry = matches[0];
+      if (wanted.kind === "dispatch-policy" && entry.policyMode !== "active") return null;
+      const digest = await installedDigest(wanted.targetPath, wanted.mode, entry.afterSha256);
+      if (digest === null) return null;
+      if (wanted.publicPath !== null) runtimeHashes[wanted.publicPath] = digest;
+    }
+    if (runtimeHashes["docs/workflow-contract-evidence.json"] !==
+      record.activation.workflowContractEvidenceSha256) return null;
+
+    return {
+      integrity: "pass",
+      allowTypedBridge: false,
+      policySha256: policy.sha256,
+      activationRecordSha256: sha256(recordSource),
+      configSha256,
+      agentsSha256,
+      roleHashes,
+      launcherSha256,
+      runtimeHashes,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function legacyActiveManifestEvidence(policy) {
   const activation = policy?.activation;
   try {
     if (policy?.mode !== "active" || policy?.allowTypedBridge !== false) return null;
@@ -187,6 +317,15 @@ async function activeManifestEvidence(policy) {
     );
     if (launcherSha256 === null) return null;
 
+    const workflowContractRuntimePath = join(
+      CODEX_HOME,
+      "gearbox",
+      "runtime",
+      "docs/workflow-contract-evidence.json",
+    );
+    const legacyRuntimeInventory = manifest.files.some((entry) =>
+      entry?.kind === "dispatch-runtime" && entry.targetPath === workflowContractRuntimePath,
+    ) ? DISPATCH_RUNTIME_FILES : LEGACY_DISPATCH_RUNTIME_FILES;
     const expected = [
       {
         kind: "dispatch-policy",
@@ -195,7 +334,7 @@ async function activeManifestEvidence(policy) {
         mode: 0o600,
         publicPath: null,
       },
-      ...DISPATCH_RUNTIME_FILES.map((path) => ({
+      ...legacyRuntimeInventory.map((path) => ({
         kind: "dispatch-runtime",
         sourcePath: join(repositoryRootInput, path),
         targetPath: join(CODEX_HOME, "gearbox", "runtime", path),
@@ -242,6 +381,12 @@ async function activeManifestEvidence(policy) {
   } catch {
     return null;
   }
+}
+
+async function activeActivationEvidence(policy) {
+  return Object.hasOwn(policy?.activation ?? {}, "recordPath")
+    ? activeRecordEvidence(policy)
+    : legacyActiveManifestEvidence(policy);
 }
 
 function safeScopePath(scope) {
@@ -307,7 +452,7 @@ async function main() {
   const [, , command, ...args] = process.argv;
   const loaded = await dispatchPolicy();
   const activeEvidence = loaded.state === "active"
-    ? await activeManifestEvidence(loaded.policy)
+    ? await activeActivationEvidence(loaded.policy)
     : null;
   if (loaded.state === "off" || (loaded.state === "active" && activeEvidence === null)) {
     output(off());

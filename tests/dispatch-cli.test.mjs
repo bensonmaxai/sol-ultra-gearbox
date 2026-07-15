@@ -6,7 +6,12 @@ import { spawn } from "node:child_process";
 import test from "node:test";
 import { createHash } from "node:crypto";
 import { createDispatchPolicy, serializeDispatchPolicy } from "../lib/dispatch-policy.mjs";
-import { DISPATCH_RUNTIME_FILES, ROLE_SPECS } from "../lib/gearbox.mjs";
+import {
+  DISPATCH_RUNTIME_FILES,
+  ROLE_SPECS,
+  activeActivationRecordPath,
+  persistActiveActivationRecord,
+} from "../lib/gearbox.mjs";
 import { workflowPlan } from "./helpers/workflow-fixtures.mjs";
 
 const REPO_ROOT = resolve(new URL("..", import.meta.url).pathname);
@@ -84,18 +89,28 @@ function run(args, env = {}, cwd = REPO_ROOT) {
   });
 }
 
-async function fixture(t, { policy = true, policyMode = "shadow" } = {}) {
+async function fixture(t, {
+  policy = true,
+  policyMode = "shadow",
+  activationKind = "legacy",
+  legacyRuntimeInventory = false,
+} = {}) {
   const home = await mkdtemp(join(tmpdir(), "gearbox-dispatch-home-"));
   const owned = await mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-packet-dispatch-"));
   t.after(() => Promise.all([rm(home, { recursive: true, force: true }), rm(owned, { recursive: true, force: true })]));
   if (policy) {
     await mkdir(join(home, "gearbox"), { recursive: true, mode: 0o700 });
     const manifestPath = join(home, "reports", "fixture-acceptance", "install-manifest.json");
+    const recordPath = activeActivationRecordPath(home, "fixture");
     const activation = policyMode === "active"
-      ? { installId: "fixture", manifestPath }
+      ? {
+          installId: "fixture",
+          ...(activationKind === "current" ? { recordPath } : { manifestPath }),
+        }
       : null;
     const policyPath = join(home, "gearbox", "dispatch-policy.json");
-    const source = serializeDispatchPolicy(createDispatchPolicy({ mode: policyMode, allowTypedBridge: false, activation }));
+    const policyValue = createDispatchPolicy({ mode: policyMode, allowTypedBridge: false, activation });
+    const source = serializeDispatchPolicy(policyValue);
     await writeFile(
       policyPath,
       source,
@@ -160,8 +175,13 @@ async function fixture(t, { policy = true, policyMode = "shadow" } = {}) {
         afterSha256: launcherDigest,
         targetSha256: launcherDigest,
       });
-      for (const path of DISPATCH_RUNTIME_FILES) {
-        const runtimeSource = `runtime:${path}\n`;
+      const runtimeInventory = legacyRuntimeInventory
+        ? DISPATCH_RUNTIME_FILES.filter((path) => path !== "docs/workflow-contract-evidence.json")
+        : DISPATCH_RUNTIME_FILES;
+      for (const path of runtimeInventory) {
+        const runtimeSource = path === "docs/workflow-contract-evidence.json"
+          ? workflowContractSource
+          : `runtime:${path}\n`;
         const runtimeDigest = createHash("sha256").update(runtimeSource).digest("hex");
         const targetPath = join(home, "gearbox", "runtime", path);
         await mkdir(dirname(targetPath), { recursive: true, mode: 0o700 });
@@ -190,12 +210,14 @@ async function fixture(t, { policy = true, policyMode = "shadow" } = {}) {
         afterSha256: wrapperDigest,
         targetSha256: wrapperDigest,
       });
-      await mkdir(dirname(manifestPath), { recursive: true, mode: 0o700 });
-      await writeFile(manifestPath, `${JSON.stringify({
+      const manifest = {
         schemaVersion: 1,
+        generatedAt: "2026-07-15T00:00:00.000Z",
+        completedAt: "2026-07-15T00:01:00.000Z",
         status: "applied",
         activation: {
           installId: "fixture",
+          ...(activationKind === "current" ? { recordPath } : {}),
           manifestPath,
           repositoryRoot: home,
           policySha256: JSON.parse(source).sha256,
@@ -208,7 +230,12 @@ async function fixture(t, { policy = true, policyMode = "shadow" } = {}) {
         staticChecks: { strictConfig: true, configLoad: true, mcpConfig: true, installation: true },
         postInstallRootSmoke: { pass: true, actual: { persisted: true, model: "gpt-5.6-sol", effort: "ultra" } },
         files,
-      })}\n`, { mode: 0o600 });
+      };
+      await mkdir(dirname(manifestPath), { recursive: true, mode: 0o700 });
+      await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`, { mode: 0o600 });
+      if (activationKind === "current") {
+        await persistActiveActivationRecord({ codexHome: home, manifest, policy: policyValue });
+      }
     }
   }
   const path = join(owned, "packet.json");
@@ -399,6 +426,54 @@ test("workflow-next retains a safe active typed spawn message and returns only u
   await assert.rejects(access(join(source, "reports", "workflow-outcomes.jsonl")));
 });
 
+test("current active status survives report cleanup and validates only durable installed state", async (t) => {
+  const { home } = await fixture(t, {
+    policyMode: "active",
+    activationKind: "current",
+  });
+  const recordPath = activeActivationRecordPath(home, "fixture");
+  const recordSource = await readFile(recordPath, "utf8");
+  assert.doesNotMatch(recordSource, /manifestPath|repositoryRoot|sourcePath|backup/);
+
+  await rm(join(home, "reports"), { recursive: true, force: true });
+  const active = await run(["status"], { CODEX_HOME: home });
+  const status = jsonOnly(active);
+  assert.equal(status.mode, "active");
+  assert.equal(status.integrity, "pass");
+  assert.equal(status.activationRecordSha256, createHash("sha256").update(recordSource).digest("hex"));
+  assert.doesNotMatch(active.stdout, /recordPath|activations|manifestPath|reports/);
+
+  const drift = JSON.parse(recordSource);
+  drift.activation.acceptanceBindingSha256 = "invalid";
+  await writeFile(recordPath, `${JSON.stringify(drift)}\n`, { mode: 0o600 });
+  assert.deepEqual(
+    jsonOnly(await run(["status"], { CODEX_HOME: home })),
+    { status: "GEARBOX_DISPATCH_OFF", mode: "off" },
+  );
+  await writeFile(recordPath, recordSource, { mode: 0o600 });
+
+  await chmod(dirname(recordPath), 0o755);
+  assert.deepEqual(
+    jsonOnly(await run(["status"], { CODEX_HOME: home })),
+    { status: "GEARBOX_DISPATCH_OFF", mode: "off" },
+  );
+  await chmod(dirname(recordPath), 0o700);
+
+  const workflowEvidencePath = join(
+    home,
+    "gearbox",
+    "runtime",
+    "docs",
+    "workflow-contract-evidence.json",
+  );
+  const workflowEvidence = await readFile(workflowEvidencePath, "utf8");
+  await writeFile(workflowEvidencePath, `${workflowEvidence}\n`, { mode: 0o644 });
+  assert.deepEqual(
+    jsonOnly(await run(["status"], { CODEX_HOME: home })),
+    { status: "GEARBOX_DISPATCH_OFF", mode: "off" },
+  );
+});
+
 test("active policy requires its applied manifest before planning", async (t) => {
   const { home, path } = await fixture(t, { policyMode: "active" });
   const valid = await run(["status"], { CODEX_HOME: home });
@@ -539,6 +614,18 @@ test("active policy requires its applied manifest before planning", async (t) =>
   await chmod(join(home, "gearbox", "dispatch-policy.json"), 0o644);
   const wrongMode = await run(["status"], { CODEX_HOME: home });
   assert.deepEqual(jsonOnly(wrongMode), { status: "GEARBOX_DISPATCH_OFF", mode: "off" });
+});
+
+test("legacy active status accepts the exact pre-record runtime inventory", async (t) => {
+  const { home } = await fixture(t, {
+    policyMode: "active",
+    activationKind: "legacy",
+    legacyRuntimeInventory: true,
+  });
+  const value = jsonOnly(await run(["status"], { CODEX_HOME: home }));
+  assert.equal(value.mode, "active");
+  assert.equal(value.integrity, "pass");
+  assert.equal(Object.hasOwn(value.runtimeHashes, "docs/workflow-contract-evidence.json"), false);
 });
 
 test("active isolated execution materializes only allowed read scope and never releases failed deliverables", async (t) => {

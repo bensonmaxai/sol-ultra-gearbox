@@ -118,7 +118,7 @@ For supported actual delegation, use this exact root workflow:
 5. `typed_child`: Sol calls `spawn_agent` with exact typed args, waits, closes the child, and validates runtime evidence.
 6. `isolated_role_root`: run `gearbox-dispatch run-isolated`; this is an isolated root, never a child.
 7. Reject missing or mismatched evidence before integration.
-8. On a hard active-mode failure, stop delegation and use the hash-bound policy activation manifest with the managed rollback command.
+8. On a hard active-mode failure, stop delegation and use the hash-bound local rollback manifest with the managed rollback command.
 9. Sol integrates, runs final relevant tests, records the privacy-safe outcome, and cleans the packet.
 
 The execution shapes are `root_inline`, `typed_child`, `isolated_role_root`,
@@ -137,11 +137,13 @@ roles, or missing trusted runtime evidence fail closed to `root_inline`. Give a 
 initial attempt and at most one correction for a concrete local output defect;
 never retry identity, permission, scope, cleanup, policy, ambiguity, or hidden
 coupling failures. Active mode requires trusted current ten-question acceptance
-evidence and an applied manifest. Active dispatch status verifies managed
+evidence, a persistent managed activation record, and an applied local rollback
+manifest. Active dispatch status reads the private record beneath
+`$CODEX_HOME/gearbox/activations/` and verifies managed
 configuration, AGENTS, role, launcher, runtime, and wrapper hashes and modes,
-reports the policy digest and `allowTypedBridge=false`, and redacts the local
-manifest path. Only the managed rollback command may consume it to change global
-state. Do not claim a savings percentage before ten comparable root-inclusive
+reports the policy digest and `allowTypedBridge=false`, and redacts both record
+and manifest paths. Only the managed rollback command may consume the manifest
+to change global state. Do not claim a savings percentage before ten comparable root-inclusive
 real-work pairs exist.
 
 Treat Q10 scopes as declared routing evidence, not observed file-read telemetry.
@@ -238,6 +240,11 @@ and only after all live roles pass. An explicit `--reuse-smoke` report may
 avoid a duplicate paid run only when the fixed-TTL binding validator accepts
 the recent local evidence. Preserve the emitted manifest.
 
+Active apply must persist a private `0600` installed-state record under
+`$CODEX_HOME/gearbox/activations/<installId>.json`; repository report cleanup
+must not disable active status. Keep the emitted ignored manifest separately as
+the rollback and release-evidence input.
+
 If post-install validation fails, require automatic rollback. For a later
 manual rollback, use the exact manifest path and avoid `--force` unless the
 owner accepts overwriting post-install drift.
@@ -260,7 +267,7 @@ the managed command; it disables the folder instead of deleting it.
 ## Prepare a public release
 
 Generate the paired machine-readable and Markdown evidence with
-`npm run release:evidence -- --latest-current --workflow-contract docs/workflow-contract-evidence.json --usage <path>`, then
+`npm run release:evidence -- --latest-current --workflow-contract docs/workflow-contract-evidence.json --usage reports/<run>/real-work-usage.json`, then
 run unit tests, `npm run release:check`, the official skill validator when
 available, and a local secret scanner. Keep raw reports, auth state, complete
 user config, rollout contents, and private filesystem paths out of Git.

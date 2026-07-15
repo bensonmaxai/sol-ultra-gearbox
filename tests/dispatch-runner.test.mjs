@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { lstat, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -129,18 +129,40 @@ test("isolated runner accepts the skill tester only for its exact workflow reaso
 test("isolated runner accepts exact root evidence and removes temporary homes", async () => {
   const root = await mkdtemp(join(tmpdir(), "dispatch-runner-success-"));
   const cwd = await mkdtemp(join(tmpdir(), "dispatch-runner-work-"));
+  const concurrentRunner = await mkdtemp(join(tmpdir(), "sol-ultra-gearbox-v2-dispatch-sol_skill_tester-"));
   try {
     const fake = await createFakeCodex(join(root, "fake-codex.mjs"));
     await writeFile(join(root, "auth.json"), "fake-auth\n", "utf8");
     let delivered = null;
-    const result = await runIsolatedRole({ codexBin: fake, codexHome: root, roleSpec: luna, roleSource, cwd, task, taskHash: sha256(task), timeoutMs: 2_000, onDeliverable: async (value) => { delivered = value; return receiveDeliverable(value); } });
+    const cleanedPaths = [];
+    const result = await runIsolatedRole({
+      codexBin: fake,
+      codexHome: root,
+      roleSpec: luna,
+      roleSource,
+      cwd,
+      task,
+      taskHash: sha256(task),
+      timeoutMs: 2_000,
+      onDeliverable: async (value) => { delivered = value; return receiveDeliverable(value); },
+      cleanupArtifacts: async (paths) => {
+        cleanedPaths.push(...paths);
+        return cleanupProbeArtifacts(paths);
+      },
+    });
     assert.equal(result.pass, true);
     assert.equal(delivered, '{"kind":"fake-deliverable","value":"verified"}');
     assert.doesNotMatch(JSON.stringify(result), /fake-deliverable|verified/);
     assert.equal(result.actual.parentTokens, 17);
     assert.equal(result.actual.depth, 0);
-    assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("sol-ultra-gearbox-v2-dispatch-")), []);
-  } finally { await rm(root, { recursive: true, force: true }); await rm(cwd, { recursive: true, force: true }); }
+    assert.equal(cleanedPaths.length, 2);
+    for (const path of cleanedPaths) await assert.rejects(lstat(path), /ENOENT/);
+    assert.equal((await lstat(concurrentRunner)).isDirectory(), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+    await rm(concurrentRunner, { recursive: true, force: true });
+  }
 });
 
 test("isolated runner passes task data as argv rather than a shell command", async () => {
@@ -208,7 +230,6 @@ test("isolated runner fails closed for fake runtime evidence, delegation, timeou
       assert.equal(result.pass, false, mode);
       assert.equal(result.rollbackRequired, true, mode);
     }
-    assert.deepEqual((await readdir(tmpdir())).filter((name) => name.startsWith("sol-ultra-gearbox-v2-dispatch-")), []);
   } finally { await rm(root, { recursive: true, force: true }); await rm(cwd, { recursive: true, force: true }); }
 });
 

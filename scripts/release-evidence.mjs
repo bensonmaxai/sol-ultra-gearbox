@@ -14,6 +14,7 @@ import {
   validateObservedUsageReport,
 } from "../lib/cost-evidence.mjs";
 import {
+  activeActivationRecordPath,
   atomicWrite,
   ROLE_SPECS,
   RUNTIME_BINDING_FILES,
@@ -23,6 +24,7 @@ import {
   writeJson,
 } from "../lib/gearbox.mjs";
 import {
+  OBSERVED_USAGE_REPORT_BASENAME,
   createRepositorySourceManifest,
   finalizeReleaseEvidence,
   renderReleaseEvidence,
@@ -280,6 +282,17 @@ function runtimeEvidenceCompatible(
   );
 }
 
+function durableActivationRecordBinding(manifest) {
+  try {
+    return manifest?.activation?.recordPath === activeActivationRecordPath(
+      CODEX_HOME,
+      manifest?.activation?.installId,
+    ) && SHA256.test(manifest?.activation?.recordSha256 ?? "");
+  } catch {
+    return false;
+  }
+}
+
 function validateActiveTransition({
   manifest,
   manifestPath,
@@ -313,6 +326,7 @@ function validateActiveTransition({
       manifest?.activation?.manifestPath === resolve(manifestPath) &&
       typeof manifest?.activation?.repositoryRoot === "string" &&
       resolve(manifest.activation.repositoryRoot) === REPO_ROOT,
+    durableActivationRecord: durableActivationRecordBinding(manifest),
     configPaths:
       manifest?.config?.path === join(CODEX_HOME, "config.toml"),
     configBinding: validateActiveConfigBinding({
@@ -354,6 +368,8 @@ function validateActiveTransition({
       activeStatus?.mode === "active" &&
       activeStatus?.integrity === "pass" &&
       activeStatus?.allowTypedBridge === false &&
+      activeStatus?.activationRecordSha256 ===
+        manifest?.activation?.recordSha256 &&
       activeStatus?.configSha256 === activeConfigSha256 &&
       activeStatus?.policySha256 === manifest?.activation?.policySha256,
     policyHash: SHA256.test(manifest?.activation?.policySha256 ?? ""),
@@ -624,7 +640,7 @@ async function main() {
   const [, , command, ...args] = process.argv;
   if (command !== "generate") {
     throw new Error(
-      "Usage: node scripts/release-evidence.mjs generate (--latest-current | --smoke <reports/.../smoke.json> --sdd <reports/.../sdd.json> --acceptance <reports/.../acceptance.json> --activation-manifest <reports/.../install-manifest.json>) --workflow-contract docs/workflow-contract-evidence.json --usage <reports/.../real-work-usage.json> [--cost-ledger <path>]",
+      `Usage: node scripts/release-evidence.mjs generate (--latest-current | --smoke <reports/.../smoke.json> --sdd <reports/.../sdd.json> --acceptance <reports/.../acceptance.json> --activation-manifest <reports/.../install-manifest.json>) --workflow-contract docs/workflow-contract-evidence.json --usage <reports/.../${OBSERVED_USAGE_REPORT_BASENAME}> [--cost-ledger <path>]`,
     );
   }
   const statusBefore = await runCommand("git", [
@@ -657,7 +673,7 @@ async function main() {
       join(REPO_ROOT, "scripts", "gearbox-dispatch.mjs"),
       "status",
     ]),
-    readLocalReport(optionValue(args, "--usage"), "real-work-usage.json"),
+    readLocalReport(optionValue(args, "--usage"), OBSERVED_USAGE_REPORT_BASENAME),
     loadCostStatus(
       optionValue(args, "--cost-ledger") ?? join(REPORTS_ROOT, "cost-evidence.json"),
     ),

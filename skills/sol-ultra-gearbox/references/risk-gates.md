@@ -20,7 +20,7 @@ Use these gates in order. Stop at the first failure.
 | Reusable smoke | Clean commit, matching config/Codex/role/runtime hashes, fixed TTL | Dirty tree, stale report, path escape, symlink, or any hash drift | Run a fresh approved smoke or stop |
 | Writing-skills pressure test | Owner approval, isolated `sol_skill_tester`, at least five RED plus five GREEN fresh contexts, identical task/model/effort, target skill only in GREEN | Missing control, verdict leakage, parallel reuse, role/runtime mismatch, write, spawn, or cleanup failure | Stop on the first failure; do not publish or apply Active evidence |
 | Cost | Persisted parent and child token usage | Tokens inferred from prose or role | Do not claim savings |
-| Global apply | Explicit owner approval, all live roles pass, and persisted fresh CLI root is Sol Max or Ultra | Any earlier gate failed | Do not modify `~/.codex` |
+| Global apply | Explicit owner approval, all live roles pass, persistent activation-record target is private, and persisted fresh CLI root is Sol Max or Ultra | Any earlier gate failed | Do not modify `~/.codex` |
 | Skill install | Managed target and unchanged installed hashes | Unmanaged or locally edited target | Refuse overwrite |
 | Publication | Tests, release check, skill validation, secret scan | Raw reports, secrets, or private home paths | Do not commit or push |
 
@@ -37,7 +37,7 @@ and `active` may execute an approved decision. First active installation sets
 `allowTypedBridge=false`. One correction is allowed only for a concrete local
 output defect; identity, permission, scope, cleanup, policy, or ambiguity
 failure receives no retry. Hard active failures stop delegation and use only
-the hash-bound activation manifest with the managed rollback command.
+the hash-bound local rollback manifest with the managed rollback command.
 
 Automatic rollback must restore the previous Gearbox-owned config blocks to
 the bound pre-install hash and retain privacy-safe failure diagnostics. Do not

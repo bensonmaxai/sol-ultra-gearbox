@@ -140,10 +140,13 @@ Unknown skills, generic roles, no verified native-or-isolated execution
 surface, and missing or mismatched runtime evidence remain root-inline. A cheap role gets one initial
 attempt and at most one correction for a concrete local output defect; identity,
 permission, scope, cleanup, policy, ambiguity, or hidden-coupling failures do
-not retry. Trusted current ten-question acceptance evidence and an applied
-activation manifest are required before first active mode. A hard active-mode
-failure stops delegation; the manifest path is redacted from public output, and
-only the managed rollback command can consume it to alter global state.
+not retry. Trusted current ten-question acceptance evidence, a persistent
+managed activation record, and a local rollback manifest are required before
+first active mode. Active status reads
+`$CODEX_HOME/gearbox/activations/<installId>.json`, so repository report cleanup
+does not disable routing. A hard active-mode failure stops delegation;
+activation-record and manifest paths are redacted from public output, and only
+the managed rollback command can consume the manifest to alter global state.
 
 Q10 verifies exact typed fields, two distinct non-empty task messages, declared
 disjoint scope mapping, persisted child identity, lineage, markers, tokens, no
@@ -202,7 +205,7 @@ npm run dispatch:status
 
 An active status reports integrity `pass`, `allowTypedBridge=false`, the policy
 digest, and current managed configuration, role, launcher, and runtime hashes
-without exposing the manifest path.
+without exposing the activation-record or rollback-manifest path.
 
 The dry run does not run model-backed probes or modify global configuration.
 `npm run acceptance` and the final active apply are paid, owner-authorized
@@ -301,9 +304,11 @@ node scripts/gearbox.mjs apply --promote-v2 \
 Reuse fails closed unless the report is under this repo's `reports/`, is a
 regular non-symlink file, is at most 30 minutes old, and exactly matches the
 current clean commit, config, Codex version, role files, and runtime sources.
-Apply writes marker-delimited changes, performs post-install checks, and
-automatically rolls back on failure. For a manual rollback, use the local
-manifest printed by the apply command:
+Apply writes marker-delimited changes, performs post-install checks, persists a
+private `0600` activation record beneath `$CODEX_HOME/gearbox/activations/`, and
+automatically rolls back on failure. The ignored repository manifest remains
+the hash-bound rollback and release-evidence input. For a manual rollback, use
+the local manifest printed by the apply command:
 
 ```bash
 node scripts/gearbox.mjs rollback --manifest reports/<run>/install-manifest.json

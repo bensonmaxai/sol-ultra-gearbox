@@ -16,6 +16,7 @@ import {
   ROLE_SPECS,
   TYPED_ROLE_NAMES,
   WORKFLOW_POLICY,
+  activeActivationRecordPath,
   atomicWrite,
   captureConfigRollbackState,
   cleanupProbeArtifacts,
@@ -23,7 +24,9 @@ import {
   RUNTIME_BINDING_FILES,
   WORKFLOW_CONTRACT_SOURCE_PATHS,
   installDispatchRuntime,
+  persistActiveActivationRecord,
   readCurrentWorkflowContractEvidence,
+  removeActiveActivationRecord,
   rollbackDispatchRuntime,
   redactSensitive,
   removeOwnedSmokeProjectEntries,
@@ -35,7 +38,9 @@ import {
   summarizeRollout,
   validateTypedSpawnArgs,
   validatePostInstallRootRuntime,
+  validateActiveActivationRecord,
   validateRoleText,
+  verifyActiveActivationRecordForRemoval,
   verifyProbe,
   writeJson,
 } from "../lib/gearbox.mjs";
@@ -61,7 +66,6 @@ const WORKFLOW_RUNTIME_FILES = [
 const RUNTIME_BINDING_ONLY_FILES = [
   "lib/workflow-contract-evidence.mjs",
   "scripts/workflow-contract-evidence.mjs",
-  "docs/workflow-contract-evidence.json",
 ];
 
 function relativeImports(source) {
@@ -458,6 +462,7 @@ test("workflow runtime inventory installs every CLI dependency and binds only de
       `${path} must precede the installed CLI`,
     );
   }
+  assert.ok(DISPATCH_RUNTIME_FILES.includes("docs/workflow-contract-evidence.json"));
   for (const path of RUNTIME_BINDING_ONLY_FILES) {
     assert.ok(RUNTIME_BINDING_FILES.includes(path), path);
     assert.equal(DISPATCH_RUNTIME_FILES.includes(path), false, path);
@@ -595,6 +600,112 @@ test("active dispatch install requires a hash-bound activation policy and remain
   assert.deepEqual(installed.activation, activation);
   assert.equal(installed.allowTypedBridge, false);
   await rollbackDispatchRuntime({ manifest, force: true });
+});
+
+test("active activation record is private, persistent, and detached from repository paths", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "gearbox-active-record-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const installId = "install-test";
+  const recordPath = activeActivationRecordPath(home, installId);
+  const policy = createDispatchPolicy({
+    mode: "active",
+    allowTypedBridge: false,
+    activation: { installId, recordPath },
+  });
+  const digest = "a".repeat(64);
+  const files = [
+    ...ROLE_SPECS.map((spec) => ({
+      kind: "role",
+      role: spec.name,
+      sourcePath: join("/private/tmp/task13", "roles", spec.sourceFile),
+      targetPath: join(home, "agents", spec.installFile),
+      afterSha256: digest,
+      backup: { backupPath: join("/private/tmp/task13", "backup") },
+    })),
+    {
+      kind: "launcher",
+      sourcePath: "/private/tmp/task13/scripts/codex-typed-agent",
+      targetPath: join(home, "bin", "codex-typed-agent"),
+      mode: 0o755,
+      afterSha256: digest,
+    },
+    {
+      kind: "dispatch-policy",
+      sourcePath: null,
+      targetPath: join(home, "gearbox", "dispatch-policy.json"),
+      mode: 0o600,
+      afterSha256: digest,
+      policyMode: "active",
+    },
+    ...DISPATCH_RUNTIME_FILES.map((path) => ({
+      kind: "dispatch-runtime",
+      sourcePath: join("/private/tmp/task13", path),
+      targetPath: join(home, "gearbox", "runtime", path),
+      mode: 0o644,
+      afterSha256: digest,
+    })),
+    {
+      kind: "dispatch-wrapper",
+      sourcePath: "/private/tmp/task13/scripts/gearbox-dispatch",
+      targetPath: join(home, "bin", "gearbox-dispatch"),
+      mode: 0o755,
+      afterSha256: digest,
+    },
+  ];
+  const manifest = {
+    schemaVersion: 1,
+    generatedAt: "2026-07-15T00:00:00.000Z",
+    completedAt: "2026-07-15T00:01:00.000Z",
+    status: "applied",
+    activation: {
+      installId,
+      recordPath,
+      manifestPath: "/private/tmp/task13/reports/install-manifest.json",
+      repositoryRoot: "/private/tmp/task13",
+      policySha256: policy.sha256,
+      acceptanceBindingSha256: "b".repeat(64),
+      writingSkillsEvidenceSha256: "c".repeat(64),
+      workflowContractEvidenceSha256: "d".repeat(64),
+    },
+    config: { path: join(home, "config.toml"), mode: 0o600, afterSha256: digest },
+    agents: { path: join(home, "AGENTS.md"), mode: 0o644, afterSha256: digest },
+    staticChecks: { strictConfig: true, configLoad: true, mcpConfig: true, installation: true },
+    postInstallRootSmoke: {
+      pass: true,
+      actual: { persisted: true, model: "gpt-5.6-sol", effort: "ultra", sessionId: "drop-me" },
+    },
+    files,
+  };
+
+  const persisted = await persistActiveActivationRecord({ codexHome: home, manifest, policy });
+  assert.equal(persisted.path, recordPath);
+  assert.match(persisted.sha256, /^[a-f0-9]{64}$/);
+  assert.equal((await stat(recordPath)).mode & 0o777, 0o600);
+  assert.equal((await stat(dirname(recordPath))).mode & 0o777, 0o700);
+  assert.equal(validateActiveActivationRecord(persisted.record, { codexHome: home, policy }).pass, true);
+  const source = await readFile(recordPath, "utf8");
+  assert.doesNotMatch(source, /private\/tmp|repositoryRoot|manifestPath|sourcePath|backup|sessionId/);
+  assert.equal((await verifyActiveActivationRecordForRemoval({
+    codexHome: home,
+    activation: { ...manifest.activation, recordPath },
+    expectedSha256: persisted.sha256,
+  })).exists, true);
+  await writeFile(recordPath, `${source.trimEnd()} \n`, { mode: 0o600 });
+  await assert.rejects(
+    removeActiveActivationRecord({
+      codexHome: home,
+      activation: { ...manifest.activation, recordPath },
+      expectedSha256: persisted.sha256,
+    }),
+    /changed after installation/,
+  );
+  await writeFile(recordPath, source, { mode: 0o600 });
+  assert.equal((await removeActiveActivationRecord({
+    codexHome: home,
+    activation: { ...manifest.activation, recordPath },
+    expectedSha256: persisted.sha256,
+  })).action, "removed");
+  await assert.rejects(lstat(recordPath), /ENOENT/);
 });
 
 test("redactSensitive removes sensitive payloads but retains usage counts", () => {

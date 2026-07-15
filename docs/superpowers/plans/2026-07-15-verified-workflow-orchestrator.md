@@ -2057,7 +2057,19 @@ rtk npm run skill:install -- --apply
 Expected: installed, updated, or already current. A missing or invalid dispatch
 policy still resolves off.
 
-- [ ] **Step 3: Run the owner-witnessed paid active apply**
+- [ ] **Step 3: Run the paid SDD adapter verification**
+
+Run under the same explicit paid-verification approval:
+
+```bash
+rtk npm run smoke:sdd
+```
+
+Expected: `GEARBOX_SDD_PASS` with a current ignored `sdd.json` report. This is a
+separate paid probe and is not implied by role smoke, writing-skills pressure
+tests, or the active apply. Stop on failure and do not retry automatically.
+
+- [ ] **Step 4: Run the owner-witnessed paid active apply**
 
 Run:
 
@@ -2077,31 +2089,32 @@ post-write failure must invoke existing manifest-bound automatic rollback and
 restore the prior Gearbox-owned blocks and runtime targets to their recorded
 hashes.
 
-- [ ] **Step 4: Verify active state and a fresh root**
+- [ ] **Step 5: Verify active state and a fresh root**
 
 Run: `rtk npm run dispatch:status`
 
 Expected: `active`, integrity PASS, `allowTypedBridge=false`, current policy,
 config, AGENTS, role, launcher, wrapper, and every workflow runtime hash; no
-manifest path in public output.
+activation-record or manifest path in public output.
 
 Open a fresh CLI root and require persisted `gpt-5.6-sol` at Max or Ultra effort.
 This proves the active CLI quality floor, not the task-local Desktop mode. Do
 not use the pre-install task as fresh-root evidence.
 
-- [ ] **Step 5: Verify rollback readiness without rolling back success**
+- [ ] **Step 6: Verify rollback readiness without rolling back success**
 
 Inspect the emitted ignored manifest and confirm it binds config, AGENTS, roles,
 policy, launcher, wrapper, all workflow runtime files, smoke, acceptance,
-workflow evidence, current commit, and pre-install hashes. Preserve the exact
+workflow evidence, persistent activation-record path/hash, current commit, and
+pre-install hashes. Preserve the exact
 manual rollback command by inserting the literal manifest path printed by
-Step 3 into `rtk node scripts/gearbox.mjs rollback --manifest` and recording the
+Step 4 into `rtk node scripts/gearbox.mjs rollback --manifest` and recording the
 resulting full command in the handoff.
 
 Do not execute rollback after a successful apply. Do not use `--force` unless
 the owner separately accepts overwriting post-install drift.
 
-- [ ] **Step 6: Generate redacted current release evidence**
+- [ ] **Step 7: Generate redacted current release evidence**
 
 Run:
 
@@ -2109,14 +2122,18 @@ Run:
 rtk npm run release:evidence -- \
   --latest-current \
   --workflow-contract docs/workflow-contract-evidence.json \
-  --usage reports/cost-evidence.json
+  --usage reports/<history-run>/real-work-usage.json
 ```
+
+`--usage` accepts the observed child-runtime report whose basename is exactly
+`real-work-usage.json`. Do not pass `reports/cost-evidence.json`; that file is
+the separate comparable-pair ledger used only by `--cost-ledger`.
 
 Expected: public JSON and Markdown contain aggregate runtime facts, 5/5
 deterministic workflow scenarios, Q10 canary true, and no raw reports, prompts,
 paths, IDs, or estimator.
 
-- [ ] **Step 7: Run final publication checks**
+- [ ] **Step 8: Run final publication checks**
 
 Run: `rtk npm test`
 
@@ -2130,7 +2147,7 @@ Run: `rtk gitleaks dir . --redact`
 
 Expected: no verified leaks.
 
-- [ ] **Step 8: Commit only generated redacted evidence**
+- [ ] **Step 9: Commit only generated redacted evidence**
 
 ```bash
 rtk git add docs/release-evidence.json docs/RELEASE_EVIDENCE.md
@@ -2140,7 +2157,7 @@ rtk git commit -m "docs: publish verified workflow evidence"
 Do not stage `reports/`, manifests, raw usage records, authentication state, or
 owner-owned workspace artifacts.
 
-- [ ] **Step 9: Record the final verified handoff**
+- [ ] **Step 10: Record the final verified handoff**
 
 Report the operation and result; Sol root runtime; each live role's actual
 model, effort, sandbox, fork, read/write scope, tokens, retry, and escalation;
@@ -2149,3 +2166,63 @@ outcomes; active policy hash; ignored manifest path; fresh-root result; global
 state change; and rollback command. Label any missing runtime metadata
 `unverified`. Do not infer or publish a savings, speed, or output-quality
 percentage.
+
+---
+
+### Task 13: Durability & Runbook Closure
+
+**Scope gate:** This task may change repository code, tests, and documentation
+only. It must not run paid live probes, mutate `~/.codex`, replace the current
+active policy, or regenerate live release evidence. Persistent-root
+re-activation requires a new explicit owner approval after all checks below
+finish.
+
+**Files:**
+- Activation policy, installer/rollback, dispatch status, and release evidence.
+- Task 12 runbook and its deterministic contract test.
+- Isolated-runner cleanup regression tests.
+
+- [x] **Step 1: Lock the observed gaps with deterministic RED tests**
+
+Require a persistent activation-record policy shape with legacy read
+compatibility, an exact Task 12 SDD/usage command contract, and a concurrent
+foreign runner fixture that reproduces the old global tmp scan failure.
+
+- [x] **Step 2: Persist active installed-state evidence outside reports**
+
+Write the managed record only to
+`$CODEX_HOME/gearbox/activations/<installId>.json` with directory mode `0700`
+and file mode `0600`. Keep the ignored `reports/.../install-manifest.json` as
+the rollback and release-evidence artifact. The record must contain installed
+target paths, modes, hashes, static checks, active root evidence, and evidence
+bindings only; it must not contain repository roots, source paths, backups, raw
+rollout data, or the local manifest path.
+
+- [x] **Step 3: Make status and rollback durable and fail closed**
+
+Current policy uses `recordPath`; status validates the exact private record and
+installed targets without reading repository sources or reports. Legacy
+`manifestPath` policy remains read-only compatible until re-activation.
+Rollback verifies and removes only the exact hash-bound new record, while
+preserving any earlier record needed by the restored policy.
+
+- [x] **Step 4: Close the paid runbook contract**
+
+Task 12 must run `rtk npm run smoke:sdd` before active apply and must pass a
+`reports/<history-run>/real-work-usage.json` file to `--usage`. The deterministic
+test derives that basename from the release CLI contract and rejects the cost
+ledger as usage input.
+
+- [x] **Step 5: Remove the tmp cleanup global-scan race**
+
+Tests must assert cleanup only for the exact temporary paths returned to that
+runner. A concurrent Gearbox-owned directory from another valid run must remain
+untouched and must not fail the test.
+
+- [x] **Step 6: Verify locally, commit, and stop before global state**
+
+Run targeted tests, `npm test`, doctor/dry-run checks, release checks, and a
+redacted secret scan as available. Expected before re-activation: deterministic
+tests pass, while checked-in live release evidence may be stale because source
+and the required durable activation record changed. Commit only Task 13 source,
+tests, and docs, then request a separate persistent-root re-activation approval.
