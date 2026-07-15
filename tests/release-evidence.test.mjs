@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import test from "node:test";
 import {
   createRepositorySourceManifest,
@@ -281,8 +281,10 @@ test("release generation reverifies the fixed task against the persisted rollout
   const root = await realpath(await mkdtemp(join(tmpdir(), "gearbox-root-rollout-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   const sessionsRoot = join(root, "sessions");
-  const rolloutPath = join(sessionsRoot, "fixture", "rollout.jsonl");
-  await mkdir(join(sessionsRoot, "fixture"), { recursive: true });
+  const archivedSessionsRoot = join(root, "archived_sessions");
+  const rolloutPath = join(archivedSessionsRoot, "fixture", "rollout.jsonl");
+  await mkdir(sessionsRoot, { recursive: true });
+  await mkdir(join(archivedSessionsRoot, "fixture"), { recursive: true });
   const smokePacket = createAppServerRootSmokePacket();
   const scopeBinding = appServerRootScopeBinding(smokePacket);
   const smokeRoute = selectModelRoute({ packet: smokePacket, roleSpecs: ROLE_SPECS }).root;
@@ -351,10 +353,18 @@ test("release generation reverifies the fixed task against the persisted rollout
     },
     diagnostics: { stderrBytes: 0, stderrSha256: "9".repeat(64) },
   };
-  const verification = await verifyRootProviderRollout(receipt, { sessionsRoot });
+  const sessionRoots = [sessionsRoot, archivedSessionsRoot];
+  const verification = await verifyRootProviderRollout(receipt, { sessionRoots });
   assert.equal(verification.pass, true, JSON.stringify(verification.checks));
+  assert.equal((await verifyRootProviderRollout(receipt, {
+    sessionsRoot: relative(process.cwd(), archivedSessionsRoot),
+  })).pass, true);
   receipt.runtime.resultSha256 = sha256("WRONG_MARKER");
-  assert.equal((await verifyRootProviderRollout(receipt, { sessionsRoot })).pass, false);
+  assert.equal((await verifyRootProviderRollout(receipt, { sessionRoots })).pass, false);
+  receipt.runtime.resultSha256 = sha256(APP_SERVER_ROOT_SMOKE_MARKER);
+  await mkdir(join(sessionsRoot, "duplicate"));
+  await writeFile(join(sessionsRoot, "duplicate", "rollout.jsonl"), source);
+  assert.equal((await verifyRootProviderRollout(receipt, { sessionRoots })).pass, false);
 });
 
 test("release evidence requires the exact five-scenario workflow summary and Q10 canary", () => {

@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   APP_SERVER_ROOT_SMOKE_MARKER,
@@ -247,15 +247,29 @@ export function validateRootProviderSmokeReceipt(receipt, { policySha256 = null 
   return { pass: Object.values(checks).every(Boolean), checks };
 }
 
-export async function verifyRootProviderRollout(receipt, {
-  sessionsRoot = join(CODEX_HOME, "sessions"),
-} = {}) {
-  const requestedRoot = resolve(sessionsRoot);
-  const rootMetadata = await lstat(requestedRoot);
-  const physicalRoot = await realpath(requestedRoot);
-  if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink() ||
-    physicalRoot !== requestedRoot) {
-    throw new Error("Root provider sessions directory must be physical");
+export async function verifyRootProviderRollout(receipt, options = {}) {
+  const explicitMultipleRoots = Array.isArray(options.sessionRoots);
+  const requestedRoots = explicitMultipleRoots
+    ? options.sessionRoots
+    : typeof options.sessionsRoot === "string"
+      ? [options.sessionsRoot]
+      : [join(CODEX_HOME, "sessions"), join(CODEX_HOME, "archived_sessions")];
+  if (requestedRoots.length === 0 || requestedRoots.some((value) =>
+    typeof value !== "string" || value.length === 0 ||
+      (explicitMultipleRoots && !isAbsolute(value))
+  )) {
+    throw new Error("Root provider session roots must be non-empty absolute paths");
+  }
+  const physicalRoots = [];
+  for (const root of requestedRoots) {
+    const requestedRoot = resolve(root);
+    const rootMetadata = await lstat(requestedRoot);
+    const physicalRoot = await realpath(requestedRoot);
+    if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink() ||
+      physicalRoot !== requestedRoot || physicalRoots.includes(physicalRoot)) {
+      throw new Error("Root provider session roots must be distinct physical directories");
+    }
+    physicalRoots.push(physicalRoot);
   }
   const lowerBound = Date.parse(receipt.startedAt) - 60_000;
   const upperBound = Date.parse(receipt.completedAt) + 60_000;
@@ -278,7 +292,7 @@ export async function verifyRootProviderRollout(receipt, {
       }
     }
   }
-  await walk(physicalRoot);
+  for (const physicalRoot of physicalRoots) await walk(physicalRoot);
   if (matches.length !== 1) {
     return { pass: false, checks: { uniqueRollout: false } };
   }
