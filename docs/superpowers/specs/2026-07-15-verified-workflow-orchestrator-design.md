@@ -47,7 +47,7 @@ shapes:
 `typed_child_bridge` remains part of the known shape vocabulary but is disabled
 by policy and therefore is not schedulable.
 
-An App-thread provider may be added later as `app_thread_root` only after the
+An App-thread provider may be executed later as `app_thread_root` only after the
 current runtime exposes the required tools and persisted evidence can prove its
 model, reasoning effort, project binding, lifecycle, and cleanup. It is not part
 of the initial release and must not appear as an available route before those
@@ -588,9 +588,12 @@ owner approval.
 
 ### Phase 4: Optional App-thread provider
 
-Implement only when the required Codex App tools and trusted runtime evidence
-are available. Treat it as a new capability with its own isolated tests, paid
-smoke, acceptance gate, policy flag, and rollback-safe installation.
+The repository may define and deterministically test the capability contract
+before execution exists. Do not mark it deploy-ready until an owner-authorized
+App Server host can select model and effort before turn creation and prove the
+actual runtime, project write scope, lifecycle close, paid smoke, acceptance
+gate, policy flag, and rollback-safe installation. Contract-only fallback to
+`root_inline` is partial progress, not automatic root-routing success.
 
 ### Phase 5: Real-work evaluation
 

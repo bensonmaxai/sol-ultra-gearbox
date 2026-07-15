@@ -22,6 +22,12 @@ It must set `allowTypedBridge=false`.
 `typed_child_bridge` remains unavailable unless a future, explicitly enabled
 capability has its own verified runtime evidence.
 
+Routing policy and workflow policy are separate. Task topology selects Sol
+Low/Medium/Max/Ultra, responsibility selects Luna/Terra/Sol, and provider
+capabilities select `root_inline`, `typed_child`, or `isolated_role_root`.
+Workflow adapters may constrain delegation, but cannot change a stock task's
+root model or effort after the turn begins.
+
 ## Exact routing order
 
 Quality is a hard gate before cost. A cheap role cannot overturn a quality
@@ -78,11 +84,27 @@ retry.
 
 After a hard active-mode failure, stop delegation for the task. Active status
 reads the private managed record beneath `$CODEX_HOME/gearbox/activations/` and
-verifies managed configuration, AGENTS, role, launcher, runtime, and wrapper
-hashes and modes without repository reports. Status and public evidence redact
-both record and manifest paths. Only the managed rollback command may consume the local manifest to
-alter global state. Do not publish a savings percentage or estimator until ten
-comparable root-inclusive real-work pairs exist.
+verifies exact managed config blocks, activation-bound safety semantics,
+AGENTS, role, launcher, runtime, and wrapper hashes and modes. Unrelated
+whole-file config drift remains visible but does not force `off`. Every failure
+returns a privacy-safe reason code and component breakdown without depending on
+repository reports. Status and public evidence redact both record and local
+rollback-manifest paths. Only the managed rollback command may consume that
+manifest to alter global state. Do not publish a savings percentage or estimator
+until ten comparable root-inclusive real-work pairs exist.
+
+For a legacy activation without a scoped snapshot, bind root model and effort
+to the persisted activation smoke and enforce the strict safe contract for the
+remaining semantic values. A future apply captures the complete scoped
+snapshot and exact semantic equality.
+
+The repo-level `app_thread_root` provider contract is not an enabled execution
+shape. It requires an owner-authorized lower-layer App Server host, project
+create/read/follow-up/archive tools, turn-start model and effort selection,
+trusted actual runtime evidence, verified write scope, deterministic close,
+and current paid acceptance. Any missing fact yields a reason-coded
+`root_inline` fallback. Treat that as a safe non-execution result, not as proof
+that automatic root routing succeeded.
 
 Before reporting an applied active policy, require a persisted fresh CLI root
 on `gpt-5.6-sol` at Max or Ultra effort. This is an isolated CLI quality-floor

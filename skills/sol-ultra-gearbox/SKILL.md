@@ -101,6 +101,13 @@ Gearbox enforces this flow through managed instructions and its runner; it is
 not a Codex core hook. Unsupported direct `spawn_agent` calls outside this
 skill or `gearbox-dispatch` are not intercepted by this repository.
 
+Keep routing layers separate. Task topology chooses the Sol root effort,
+responsibility chooses the Luna/Terra/Sol role, execution capability chooses
+the provider, and workflow-skill policy remains an independent gate. One
+difficult indivisible task selects Sol Max. Sol Ultra requires an explicit
+packet declaration of at least two independent, disjoint, directly consumable
+workstreams; child count alone never selects Ultra.
+
 The dispatch policy is fail closed: missing, invalid, unmanaged, or
 hash-mismatched policy is `off`. `off` makes no routing decision; `shadow`
 calculates and records a decision but completes work in the Sol root; `active`
@@ -139,12 +146,22 @@ never retry identity, permission, scope, cleanup, policy, ambiguity, or hidden
 coupling failures. Active mode requires trusted current ten-question acceptance
 evidence, a persistent managed activation record, and an applied local rollback
 manifest. Active dispatch status reads the private record beneath
-`$CODEX_HOME/gearbox/activations/` and verifies managed
-configuration, AGENTS, role, launcher, runtime, and wrapper hashes and modes,
-reports the policy digest and `allowTypedBridge=false`, and redacts both record
-and manifest paths. Only the managed rollback command may consume the manifest
-to change global state. Do not claim a savings percentage before ten comparable root-inclusive
-real-work pairs exist.
+`$CODEX_HOME/gearbox/activations/` and uses scoped config
+integrity: exact Gearbox-owned blocks and activation-bound safety semantics are
+strict, while unrelated whole-file drift is reported without forcing `off`.
+Legacy manifests bind root model and effort to persisted activation evidence
+and apply the strict safe contract to settings absent from the older snapshot.
+It also verifies AGENTS, role, launcher, runtime, and wrapper hashes and modes,
+reports privacy-safe reason codes and component checks, and redacts both record
+and manifest paths. Only the managed rollback command may consume the manifest to change
+global state. Do not claim a savings percentage before ten comparable
+root-inclusive real-work pairs exist.
+
+A future `app_thread_root` provider is contract-only until an owner-authorized
+App Server host proves turn-start model/effort selection, actual runtime
+evidence, scoped writes, deterministic close, and current paid acceptance.
+Missing evidence returns `root_inline` and must not be described as automatic
+root-routing success.
 
 Treat Q10 scopes as declared routing evidence, not observed file-read telemetry.
 Require distinct non-empty task messages plus persisted child role, model,

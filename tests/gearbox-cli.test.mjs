@@ -4,13 +4,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawn } from "node:child_process";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   renderConfig,
   rollbackConfig,
   sha256,
 } from "../lib/gearbox.mjs";
 
-const REPO_ROOT = resolve(new URL("..", import.meta.url).pathname);
+const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const CLI = join(REPO_ROOT, "scripts", "gearbox.mjs");
 const WORKFLOW_RUNTIME_FILES = [
   "lib/workflow-plan.mjs",

@@ -23,6 +23,14 @@ usage。任何 metadata 缺失、越界寫入或 schema mismatch 都會 fail clo
 Sol Max is selected on the root task. It is not a custom child role and the
 Gearbox does not spawn a Sol child to simulate it.
 
+The deterministic routing contract separates three decisions: task topology
+selects the Sol root effort, responsibility selects a Luna/Terra/Sol role, and
+verified capabilities select the execution provider. A simple local task maps
+to Sol Low, normal mixed work to Sol Medium, one difficult indivisible task to
+Sol Max, and only an explicit declaration of at least two independent,
+disjoint, directly consumable workstreams to Sol Ultra. Merely requesting two
+children is not enough.
+
 See the [complete work and model routing matrix](skills/sol-ultra-gearbox/references/routing-matrix.md)
 for Low through Ultra effort boundaries, escalation, and the distinction
 between Sol Ultra root orchestration and the Terra Ultra child profile.
@@ -180,6 +188,15 @@ The deterministic five-scenario artifact and Q10 canary establish the public
 contract without claiming speed, savings, or better output quality. See the
 [verified workflow operator contract](skills/sol-ultra-gearbox/references/verified-workflows.md).
 
+`root_inline`, native `typed_child`, and verified `isolated_role_root` remain
+the executable providers. The repository also defines a fail-closed
+`app_thread_root` capability contract for a future lower-layer App Server
+host. The current contract is not deploy-ready: it requires owner authority,
+turn-start model/effort selection, trusted actual runtime evidence, verifiable
+project write scope, deterministic lifecycle close, and current paid
+acceptance. Missing any fact selects `root_inline` with a reason code; that
+fallback is not evidence that automatic root routing ran.
+
 ## Requirements
 
 - Node.js 20 or newer
@@ -203,9 +220,22 @@ node scripts/gearbox.mjs apply --promote-v2 --dispatch-mode active
 npm run dispatch:status
 ```
 
-An active status reports integrity `pass`, `allowTypedBridge=false`, the policy
-digest, and current managed configuration, role, launcher, and runtime hashes
-without exposing the activation-record or rollback-manifest path.
+An active status reports scoped integrity `pass`, `allowTypedBridge=false`, the
+policy digest, a privacy-safe component breakdown, and current managed
+configuration, role, launcher, and runtime hashes without exposing the
+activation-record or rollback-manifest path. Unrelated whole-file
+`config.toml` drift is an observation, not a failure; exact managed-block,
+safety-semantic, policy, role, runtime, or permission drift remains hard-off
+with a concrete reason code. New activation records bind every scoped semantic
+value; legacy manifests additionally bind root model and effort to their
+persisted activation smoke while enforcing the safe contract for semantic
+values that older evidence did not retain.
+
+Stock task model and effort are selected before workflow skills run. This repo
+can classify and plan the desired root route, but cannot retroactively change
+an already-started Desktop task. Until an owner-approved lower-layer launcher
+or App Server host applies that choice before turn creation, the root-routing
+portion is policy-ready rather than deploy-ready.
 
 The dry run does not run model-backed probes or modify global configuration.
 `npm run acceptance` and the final active apply are paid, owner-authorized

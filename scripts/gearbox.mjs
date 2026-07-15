@@ -34,6 +34,7 @@ import {
   activeActivationRecordPath,
   atomicWrite,
   backupFile,
+  captureActiveConfigIntegrity,
   captureConfigRollbackState,
   cleanupProbeArtifacts,
   findRecentRollouts,
@@ -2002,6 +2003,7 @@ async function installAfterSmoke(
       beforeSha256: sha256(configSource),
       afterSha256: sha256(configTarget),
       mode: configMode,
+      integrity: captureActiveConfigIntegrity(configTarget, CODEX_HOME),
       rollbackState: configRollbackState,
       managedMarkers: [
         CONFIG_LEGACY_THREADS_MARKER,

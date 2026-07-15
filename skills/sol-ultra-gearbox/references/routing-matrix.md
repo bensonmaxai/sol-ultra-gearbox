@@ -48,6 +48,19 @@ Max and Ultra solve different problems. Max spends more reasoning on one task.
 Ultra is for meaningful parallel decomposition and usually consumes more total
 tokens because every child performs its own model and tool work.
 
+The machine-readable classifier uses these exact topology classes:
+
+| Task class | Sol root route | Required evidence |
+|---|---|---|
+| `simple` | Sol Low | At most two expected root tool calls or one local location |
+| `normal` | Sol Medium | No difficult or independently parallel shape proven |
+| `indivisible_difficult` | Sol Max | Ambiguity, hidden coupling, high risk, or weak verification |
+| `independent_workstreams` | Sol Ultra | At least two explicitly declared independent workstreams, disjoint scopes, and directly consumable results |
+
+`requestedChildren >= 2` by itself remains `normal`. The packet must carry the
+separate `independentWorkstreams >= 2` fact; Gearbox, not the owner, is
+responsible for producing that classification.
+
 ## Match typed roles to work
 
 | Typed role | Model / effort | Use for | Do not use for |

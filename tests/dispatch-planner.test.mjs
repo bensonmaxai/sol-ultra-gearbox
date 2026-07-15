@@ -2,9 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ROLE_SPECS } from "../lib/gearbox.mjs";
 import {
+  APP_THREAD_EXECUTION_ENABLED,
+  APP_THREAD_PROVIDER_CAPABILITIES,
+  classifyTaskTopology,
+  evaluateAppThreadProvider,
+  evaluateWorkflowPolicy,
   hashTaskPacket,
   planDispatch,
   renderTaskMessage,
+  selectModelRoute,
   validateTaskPacket,
 } from "../lib/dispatch-planner.mjs";
 import { compileStagePacket } from "../lib/workflow-compiler.mjs";
@@ -92,6 +98,15 @@ test("valid packet selects an isolated Terra root for read-only permission misma
   );
   assert.equal(decision.spawnArgs, null);
   assert.equal(decision.requiresRuntimeEvidence, true);
+  assert.deepEqual(decision.provider, {
+    requested: "isolated_role_root",
+    selected: "isolated_role_root",
+    requestedExecutable: true,
+    executable: true,
+    fallbackApplied: false,
+    delegatedExecution: true,
+    reasonCode: "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH",
+  });
 });
 
 test("executing-plans is a known adapter for bounded delegated phases", () => {
@@ -281,6 +296,15 @@ test("planner produces a typed child with only permitted spawn arguments", () =>
   ]);
   assert.equal(decision.spawnArgs.agent_type, "terra_explorer");
   assert.equal(decision.spawnArgs.fork_turns, "none");
+  assert.deepEqual(decision.provider, {
+    requested: "typed_child",
+    selected: "typed_child",
+    requestedExecutable: true,
+    executable: true,
+    fallbackApplied: false,
+    delegatedExecution: true,
+    reasonCode: "DELEGATE_TYPED_PERMISSION_MATCH",
+  });
 });
 
 test("shadow records the recommendation but executes root-inline", () => {
@@ -439,4 +463,134 @@ test("planner accepts a valid packet v2 without changing its routing decision", 
   assert.equal(decision.role, "terra_explorer");
   assert.equal(decision.selectedShape, "isolated_role_root");
   assert.equal(decision.reasonCode, "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH");
+});
+
+test("task classifier selects simple Sol Low, indivisible Sol Max, and independent Sol Ultra", () => {
+  const simple = plan(packet({
+    costSignals: {
+      ...packet().costSignals,
+      estimatedRootToolCalls: 2,
+    },
+  }));
+  assert.equal(simple.selectedShape, "root_inline");
+  assert.equal(simple.routing.topology.taskClass, "simple");
+  assert.deepEqual(simple.routing.root, {
+    model: "gpt-5.6-sol",
+    effort: "low",
+    reasonCode: "ROOT_ROUTE_SOL_LOW_SIMPLE",
+  });
+
+  const difficultValue = packet({
+    riskSignals: {
+      ...packet().riskSignals,
+      hiddenCoupling: true,
+    },
+  });
+  assert.equal(classifyTaskTopology(difficultValue).taskClass, "indivisible_difficult");
+  const difficult = plan(difficultValue);
+  assert.equal(difficult.selectedShape, "root_inline");
+  assert.equal(difficult.routing.root.effort, "max");
+  assert.equal(difficult.routing.root.reasonCode, "ROOT_ROUTE_SOL_MAX_SINGLE_DIFFICULT");
+
+  const independent = plan(packet({
+    batch: {
+      requestedChildren: 2,
+      writerCount: 0,
+      scopesDisjoint: true,
+      independentWorkstreams: 2,
+    },
+  }));
+  assert.equal(independent.routing.topology.taskClass, "independent_workstreams");
+  assert.equal(independent.routing.topology.independentWorkstreams, 2);
+  assert.equal(independent.routing.root.effort, "ultra");
+  assert.equal(
+    independent.routing.root.reasonCode,
+    "ROOT_ROUTE_SOL_ULTRA_INDEPENDENT_WORKSTREAMS",
+  );
+
+  const undeclaredParallelism = plan(packet({
+    batch: {
+      requestedChildren: 2,
+      writerCount: 0,
+      scopesDisjoint: true,
+    },
+  }));
+  assert.equal(undeclaredParallelism.routing.topology.taskClass, "normal");
+  assert.equal(undeclaredParallelism.routing.root.effort, "medium");
+});
+
+test("model routing maps responsibilities to Luna, Terra, and Sol independently of workflow policy", () => {
+  const routes = [
+    ["mechanical", "luna_clerk", "gpt-5.6-luna", "low"],
+    ["exploration", "terra_explorer", "gpt-5.6-terra", "medium"],
+    ["implementation", "terra_worker", "gpt-5.6-terra", "high"],
+    ["review", "sol_reviewer", "gpt-5.6-sol", "high"],
+  ];
+  for (const [responsibility, role, model, effort] of routes) {
+    const value = packet({ responsibility, workflowAdapter: "unknown:fixture" });
+    const routing = selectModelRoute({ packet: value, roleSpecs: ROLE_SPECS });
+    assert.deepEqual(routing.delegated, {
+      role,
+      model,
+      effort,
+      permission: ROLE_SPECS.find((spec) => spec.name === role).sandbox,
+    });
+    assert.equal(evaluateWorkflowPolicy(value).reasonCode, "ROOT_UNKNOWN_SKILL");
+  }
+});
+
+test("App Server thread provider contract fails closed to root-inline without executable evidence", () => {
+  assert.equal(APP_THREAD_EXECUTION_ENABLED, false);
+  assert.deepEqual(APP_THREAD_PROVIDER_CAPABILITIES, [
+    "ownerAuthorized",
+    "projectToolAvailable",
+    "createToolAvailable",
+    "readToolAvailable",
+    "followupToolAvailable",
+    "archiveToolAvailable",
+    "hostLifecycleAvailable",
+    "turnStartModelSelection",
+    "actualRuntimeEvidence",
+    "writeScopeVerifiable",
+    "closeLifecycleVerifiable",
+    "paidAcceptanceCurrent",
+  ]);
+  const appThread = Object.fromEntries(
+    APP_THREAD_PROVIDER_CAPABILITIES.map((key) => [key, true]),
+  );
+  appThread.hostLifecycleAvailable = false;
+  appThread.actualRuntimeEvidence = false;
+  appThread.paidAcceptanceCurrent = false;
+  const assessment = evaluateAppThreadProvider(appThread, { policyEnabled: false });
+  assert.equal(assessment.pass, false);
+  assert.equal(assessment.executable, false);
+  assert.equal(assessment.reasonCode, "APP_THREAD_HOST_UNAVAILABLE");
+
+  const contractOnly = evaluateAppThreadProvider(
+    Object.fromEntries(APP_THREAD_PROVIDER_CAPABILITIES.map((key) => [key, true])),
+    { policyEnabled: APP_THREAD_EXECUTION_ENABLED },
+  );
+  assert.equal(contractOnly.pass, false);
+  assert.equal(contractOnly.executable, false);
+  assert.equal(contractOnly.reasonCode, "APP_THREAD_POLICY_DISABLED");
+
+  const decision = plan(packet(), {
+    capabilities: {
+      ...CAPABILITIES,
+      agentTypeVisible: false,
+      isolatedRunnerVerified: false,
+      appThread,
+    },
+  });
+  assert.equal(decision.selectedShape, "root_inline");
+  assert.equal(decision.reasonCode, "ROOT_APP_THREAD_PROVIDER_UNAVAILABLE");
+  assert.deepEqual(decision.provider, {
+    requested: "app_thread_root",
+    selected: "root_inline",
+    requestedExecutable: false,
+    executable: true,
+    fallbackApplied: true,
+    delegatedExecution: false,
+    reasonCode: "APP_THREAD_HOST_UNAVAILABLE",
+  });
 });

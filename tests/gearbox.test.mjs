@@ -18,6 +18,7 @@ import {
   WORKFLOW_POLICY,
   activeActivationRecordPath,
   atomicWrite,
+  captureActiveConfigIntegrity,
   captureConfigRollbackState,
   cleanupProbeArtifacts,
   DISPATCH_RUNTIME_FILES,
@@ -37,6 +38,7 @@ import {
   sha256,
   summarizeRollout,
   validateTypedSpawnArgs,
+  validateActiveConfigIntegrity,
   validatePostInstallRootRuntime,
   validateActiveActivationRecord,
   validateRoleText,
@@ -138,6 +140,60 @@ test("renderConfig is idempotent", () => {
   const once = renderConfig(CONFIG_FIXTURE, "/home/test/.codex");
   const twice = renderConfig(once, "/home/test/.codex");
   assert.equal(twice, once);
+});
+
+test("active config integrity is scoped, strict for owned blocks, and rollback-safe", () => {
+  const activeBase = CONFIG_FIXTURE.replace(
+    'model_reasoning_effort = "max"\n',
+    'model_reasoning_effort = "max"\nsandbox_mode = "workspace-write"\napproval_policy = "on-request"\n',
+  );
+  const installed = renderConfig(activeBase, "/home/test/.codex");
+  const snapshot = captureActiveConfigIntegrity(installed, "/home/test/.codex");
+  assert.doesNotMatch(JSON.stringify(snapshot), /SECRET_KEEP/);
+
+  const unrelated = `${installed.trimEnd()}\n\n[unrelated]\nkeep = true\n`;
+  const unrelatedValidation = validateActiveConfigIntegrity(
+    unrelated,
+    "/home/test/.codex",
+    snapshot,
+  );
+  assert.equal(unrelatedValidation.pass, true);
+  assert.equal(unrelatedValidation.scope, "activation_snapshot");
+
+  const managedDrift = validateActiveConfigIntegrity(
+    installed.replace(
+      "max_concurrent_threads_per_session = 3",
+      "max_concurrent_threads_per_session = 4",
+    ),
+    "/home/test/.codex",
+    snapshot,
+  );
+  assert.equal(managedDrift.pass, false);
+  assert.equal(managedDrift.reasonCode, "CONFIG_MANAGED_BLOCK_DRIFT");
+
+  for (const drift of [
+    installed.replace('model_reasoning_effort = "max"', 'model_reasoning_effort = "high"'),
+    installed.replace('approval_policy = "on-request"', 'approval_policy = "never"'),
+    installed.replace('approval_policy = "on-request"', 'approval_policy = "always"'),
+    installed.replace('sandbox_mode = "workspace-write"', 'sandbox_mode = "danger-full-access"'),
+  ]) {
+    const validation = validateActiveConfigIntegrity(
+      drift,
+      "/home/test/.codex",
+      snapshot,
+    );
+    assert.equal(validation.pass, false);
+    assert.equal(validation.reasonCode, "CONFIG_SAFETY_SEMANTIC_DRIFT");
+  }
+
+  const rollbackState = captureConfigRollbackState(activeBase);
+  const restored = restoreConfigRollbackState(installed, {
+    rollbackState,
+    expectedSha256: sha256(activeBase),
+    codexHome: "/home/test/.codex",
+  });
+  assert.equal(restored.source, activeBase);
+  assert.equal(restored.exact, true);
 });
 
 test("rollbackConfig removes only Gearbox-managed config", () => {
