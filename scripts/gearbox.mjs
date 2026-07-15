@@ -93,6 +93,18 @@ const SMOKE_ROOT = Object.freeze({ model: "gpt-5.6-sol", effort: "max" });
 const WRITING_SKILLS_REPETITIONS = 5;
 const WRITING_SKILLS_REASON = "DELEGATE_ISOLATED_SKILL_PRESSURE_TEST";
 const APP_CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex";
+
+function appServerRootPolicy({ enabled, acceptance = null }) {
+  return {
+    kind: "app_server_root",
+    enabled,
+    transport: "stdio",
+    protocolVersion: 1,
+    launcherPath: join(CODEX_HOME, "bin", "gearbox-root"),
+    acceptanceBindingSha256:
+      acceptance?.runtimeBinding?.sha256 ?? "0".repeat(64),
+  };
+}
 const CODEX_BIN =
   process.env.CODEX_BIN ?? (existsSync(APP_CODEX_BIN) ? APP_CODEX_BIN : "codex");
 function timestamp() {
@@ -674,6 +686,28 @@ export async function runAcceptanceParallel(scenario, { decision = null } = {}) 
   return { ...answer, cleanup: { pass: cleanup } };
 }
 
+export function mcpConfigDoctorPasses(check) {
+  const optionalDetailFields = [
+    "configured servers",
+    "disabled servers",
+    "optional reachability failed",
+    "stdio servers",
+    "streamable_http servers",
+  ];
+  const details = check?.details;
+  const exactOptionalDetails = details !== null && typeof details === "object" &&
+    !Array.isArray(details) &&
+    JSON.stringify(Object.keys(details).sort()) ===
+      JSON.stringify(optionalDetailFields.sort()) &&
+    optionalDetailFields.every((field) => typeof details[field] === "string");
+  return check?.status === "ok" || (
+    check?.status === "warning" &&
+    check?.summary === "MCP configuration has optional issues" &&
+    exactOptionalDetails &&
+    details["optional reachability failed"].length > 0
+  );
+}
+
 async function runDoctor() {
   const roleChecks = [];
   for (const spec of ROLE_SPECS) {
@@ -738,7 +772,9 @@ async function runDoctor() {
   const doctorChecks = Object.fromEntries(
     requiredDoctorChecks.map((name) => [
       name,
-      codexDoctor?.checks?.[name]?.status === "ok",
+      name === "mcp.config"
+        ? mcpConfigDoctorPasses(codexDoctor?.checks?.[name])
+        : codexDoctor?.checks?.[name]?.status === "ok",
     ]),
   );
 
@@ -1901,7 +1937,12 @@ async function installAfterSmoke(
   }
   const policy = dispatchMode === null ? null : createDispatchPolicy(
     dispatchMode === "active"
-      ? { mode: "active", allowTypedBridge: false, activation: { installId, recordPath } }
+      ? {
+          mode: "active",
+          allowTypedBridge: false,
+          activation: { installId, recordPath },
+          rootProvider: appServerRootPolicy({ enabled: true, acceptance }),
+        }
       : { mode: "shadow", allowTypedBridge: false, activation: null },
   );
   const policySource = policy === null ? null : serializeDispatchPolicy(policy);
@@ -2049,7 +2090,7 @@ async function installAfterSmoke(
     const staticChecks = {
       strictConfig: strict.code === 0,
       configLoad: doctorJson?.checks?.["config.load"]?.status === "ok",
-      mcpConfig: doctorJson?.checks?.["mcp.config"]?.status === "ok",
+      mcpConfig: mcpConfigDoctorPasses(doctorJson?.checks?.["mcp.config"]),
       installation: doctorJson?.checks?.installation?.status === "ok",
     };
     manifest.staticChecks = staticChecks;
@@ -2185,14 +2226,29 @@ export async function dryRunApply({
   const agentsTarget = renderAgentsMd(agentsSource);
   const dispatch = dispatchMode === null ? null : (() => {
     const policy = dispatchMode === "active"
-      ? createDispatchPolicy({ mode: "active", allowTypedBridge: false, activation: { installId: "preview", recordPath: activeActivationRecordPath(CODEX_HOME, "preview") } })
+      ? createDispatchPolicy({
+          mode: "active",
+          allowTypedBridge: false,
+          activation: { installId: "preview", recordPath: activeActivationRecordPath(CODEX_HOME, "preview") },
+          rootProvider: appServerRootPolicy({ enabled: true }),
+        })
       : createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null });
     const policySource = serializeDispatchPolicy(policy);
     return {
       mode: policy.mode,
       policySha256: sha256(policySource),
+      rootProvider: policy.rootProvider ? {
+        kind: policy.rootProvider.kind,
+        enabled: policy.rootProvider.enabled,
+        transport: policy.rootProvider.transport,
+        protocolVersion: policy.rootProvider.protocolVersion,
+        acceptanceBound: /^[a-f0-9]{64}$/.test(
+          policy.rootProvider.acceptanceBindingSha256,
+        ),
+      } : null,
       runtime: DISPATCH_RUNTIME_FILES.map((path) => ({ path, sha256: null })),
       wrapper: { path: "scripts/gearbox-dispatch", sha256: null },
+      rootWrapper: { path: "scripts/gearbox-root", sha256: null },
       workflowContractEvidenceSha256: currentWorkflowContract?.sha256 ?? null,
       acceptanceRequired: dispatchMode === "active",
       acceptanceValidated: false,
@@ -2204,6 +2260,7 @@ export async function dryRunApply({
       entry.sha256 = sha256(await readFile(join(REPO_ROOT, entry.path), "utf8"));
     }
     dispatch.wrapper.sha256 = sha256(await readFile(join(REPO_ROOT, dispatch.wrapper.path), "utf8"));
+    dispatch.rootWrapper.sha256 = sha256(await readFile(join(REPO_ROOT, dispatch.rootWrapper.path), "utf8"));
   }
   return {
     pass: doctor.pass,

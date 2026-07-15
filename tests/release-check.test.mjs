@@ -11,6 +11,9 @@ const BUNDLED_SKILL = fileURLToPath(
 const VERIFIED_WORKFLOWS = fileURLToPath(
   new URL("../skills/sol-ultra-gearbox/references/verified-workflows.md", import.meta.url),
 );
+const QUALITY_DISPATCH = fileURLToPath(
+  new URL("../skills/sol-ultra-gearbox/references/quality-first-dispatch.md", import.meta.url),
+);
 const REPOSITORY_AGENTS = fileURLToPath(new URL("../AGENTS.md", import.meta.url));
 const README = fileURLToPath(new URL("../README.md", import.meta.url));
 const OPENAI_YAML = fileURLToPath(
@@ -118,5 +121,21 @@ test("managed policy, repository policy, and bundled skill publish the verified 
       value,
       /(?:claims?|promises?|guarantees?|delivers?)\s+(?:faster|[^.\n]{0,80}(?:speedup|savings|superior output))|app_thread_root provider/i,
     );
+  }
+});
+
+test("public guidance distinguishes the executable App Server launcher from stock task interception", async () => {
+  const [skill, dispatch, readme] = await Promise.all([
+    readFile(BUNDLED_SKILL, "utf8"),
+    readFile(QUALITY_DISPATCH, "utf8"),
+    readFile(README, "utf8"),
+  ]);
+  for (const value of [WORKFLOW_POLICY, skill, dispatch, readme]) {
+    assert.match(value, /app_server_root/i);
+    assert.match(value, /gearbox-root/i);
+    assert.match(value, /turn\/start/i);
+    assert.match(value, /persisted.*model.*effort|persisted.*runtime/is);
+    assert.match(value, /not.*(?:stock Desktop interception|Codex core hook)/i);
+    assert.match(value, /app_thread_root.*(?:disabled|not enabled)/i);
   }
 });

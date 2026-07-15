@@ -189,13 +189,26 @@ contract without claiming speed, savings, or better output quality. See the
 [verified workflow operator contract](skills/sol-ultra-gearbox/references/verified-workflows.md).
 
 `root_inline`, native `typed_child`, and verified `isolated_role_root` remain
-the executable providers. The repository also defines a fail-closed
-`app_thread_root` capability contract for a future lower-layer App Server
-host. The current contract is not deploy-ready: it requires owner authority,
-turn-start model/effort selection, trusted actual runtime evidence, verifiable
-project write scope, deterministic lifecycle close, and current paid
-acceptance. Missing any fact selects `root_inline` with a reason code; that
-fallback is not evidence that automatic root routing ran.
+the in-turn workflow providers. Policy schema v2 additionally enables an
+explicit foreground `app_server_root` path through the installed
+`gearbox-root` launcher. The launcher reads one managed packet, classifies Sol
+Low/Medium/Max/Ultra before the first turn, sends that model and effort in
+`turn/start`, verifies the persisted rollout, checks every workspace change
+against the declared write scope, reads the completed turn back, then
+archives, unsubscribes, and closes App Server. Its privacy-safe receipt binds
+the task, policy, route, runtime, scope, token, and lifecycle evidence.
+Host capability is derived from the exact `initialize` response and the
+runtime-bound compatible App Server version (`0.144.2`), not self-declared by
+the launcher. An unknown version is closed before `thread/start` and falls back
+to `root_inline`. The separate workflow-adapter policy gate runs before host
+discovery, so an unknown skill or missing writing-skills owner opt-in never
+starts App Server.
+
+This does not intercept a stock Desktop task and cannot retroactively change a
+turn that already started. The separate workflow-stage `app_thread_root`
+surface remains disabled. Missing policy, acceptance binding, host capability,
+runtime identity, scope, or close evidence returns a reason-coded
+`root_inline` fallback and does not count as automatic routing success.
 
 ## Requirements
 
@@ -216,8 +229,12 @@ npm run release:check
 npm run doctor -- --json
 node scripts/gearbox.mjs apply --promote-v2 --dispatch-mode active --dry-run
 npm run acceptance
-node scripts/gearbox.mjs apply --promote-v2 --dispatch-mode active
+node scripts/gearbox.mjs apply --promote-v2 --dispatch-mode active \
+  --reuse-smoke reports/<smoke-run>/smoke.json \
+  --reuse-acceptance reports/<acceptance-run>/acceptance.json
 npm run dispatch:status
+gearbox-root handshake
+gearbox-root smoke --cwd "$PWD"
 ```
 
 An active status reports scoped integrity `pass`, `allowTypedBridge=false`, the
@@ -231,18 +248,41 @@ value; legacy manifests additionally bind root model and effort to their
 persisted activation smoke while enforcing the safe contract for semantic
 values that older evidence did not retain.
 
-Stock task model and effort are selected before workflow skills run. This repo
-can classify and plan the desired root route, but cannot retroactively change
-an already-started Desktop task. Until an owner-approved lower-layer launcher
-or App Server host applies that choice before turn creation, the root-routing
-portion is policy-ready rather than deploy-ready.
+Stock task model and effort are selected before workflow skills run, so this
+repo cannot retroactively change an already-started Desktop task. After policy
+v2 is actively installed, the lower-layer launcher applies the route before
+the first turn:
+
+```bash
+gearbox-root plan --packet <owned-packet.json> --cwd "$PWD"
+gearbox-root launch --packet <owned-packet.json> --consume --cwd "$PWD"
+```
+
+The managed runner produces the packet and its topology facts; the owner does
+not select a model or effort flag. The launcher is deploy-ready only for this
+explicit foreground path. It is not a global default for stock Desktop task
+creation and is not a Codex core hook.
+
+`gearbox-root handshake` is a no-turn transport probe. The owner-authorized,
+paid `gearbox-root smoke` creates one read-only Sol Low turn, requires the exact
+`GEARBOX_APP_SERVER_ROOT_OK` marker, and persists a private receipt containing
+only hashes and numeric runtime evidence. Public release evidence accepts only
+that fixed marker hash from a receipt created after the active installation,
+then locates and reparses the uniquely matching persisted rollout to reverify
+the fixed task message, Sol Low route, session identity, cwd, token usage, and
+result marker.
+These are the launcher's only additional global writes: Codex's normal session
+rollout and the private receipt. The foreground path never edits global config,
+installed roles/runtime, or auth state and never starts a background provider.
 
 The dry run does not run model-backed probes or modify global configuration.
-`npm run acceptance` and the final active apply are paid, owner-authorized
-operations. The final apply runs fresh paid smoke and acceptance evidence unless
-both trusted reuse paths (`--reuse-smoke` and `--reuse-acceptance`) validate
-against the current clean binding. All global changes are manifest-bound and
-reversible through the managed rollback command.
+`npm run acceptance`, the final active apply, and `gearbox-root smoke` are paid,
+owner-authorized operations. Acceptance already runs the role and writing-skills
+smoke and writes both report sets. The final apply runs fresh paid smoke and
+acceptance evidence unless both trusted reuse paths (`--reuse-smoke` and
+`--reuse-acceptance`) validate against the current clean binding. All global
+changes are manifest-bound and reversible through the managed rollback
+command.
 
 ## Install the global skill
 
@@ -369,6 +409,7 @@ npm run release:evidence -- \
   --sdd reports/<run>/sdd.json \
   --acceptance reports/<run>/acceptance.json \
   --activation-manifest reports/<run>/install-manifest.json \
+  --root-provider-receipt "$CODEX_HOME/gearbox/root-receipts/<receipt>.json" \
   --workflow-contract docs/workflow-contract-evidence.json \
   --usage reports/<run>/real-work-usage.json
 ```
@@ -380,6 +421,7 @@ printing private paths:
 ```bash
 npm run release:evidence -- \
   --latest-current \
+  --root-provider-receipt "$CODEX_HOME/gearbox/root-receipts/<receipt>.json" \
   --workflow-contract docs/workflow-contract-evidence.json \
   --usage reports/<run>/real-work-usage.json
 ```

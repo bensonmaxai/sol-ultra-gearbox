@@ -157,11 +157,27 @@ and manifest paths. Only the managed rollback command may consume the manifest t
 global state. Do not claim a savings percentage before ten comparable
 root-inclusive real-work pairs exist.
 
-A future `app_thread_root` provider is contract-only until an owner-authorized
-App Server host proves turn-start model/effort selection, actual runtime
-evidence, scoped writes, deterministic close, and current paid acceptance.
-Missing evidence returns `root_inline` and must not be described as automatic
-root-routing success.
+Policy v2 may enable the owner-authorized foreground `app_server_root` launcher.
+`gearbox-root` classifies the managed packet before the first turn, sends the
+selected Sol model and effort in `turn/start`, validates persisted rollout
+identity and declared write scope, reads back the completed turn, then
+archives, unsubscribes, and requires a clean host exit. Every host file and the
+paid-acceptance runtime binding are activation-bound. Missing evidence returns
+`root_inline` without starting a turn. This explicit launcher is not stock
+Desktop interception; workflow-stage `app_thread_root` remains disabled.
+Derive host capability from the exact initialize response and compatible
+runtime-bound App Server version; never use a launcher-owned all-true
+capability map. Run the independent workflow-adapter gate before host
+discovery. Unknown adapters and missing writing-skills owner opt-in return
+`root_inline` without starting App Server.
+Treat `gearbox-root handshake` as transport-only. Runtime verification requires
+one explicitly authorized paid `gearbox-root smoke` after active install; accept
+release evidence only when its private receipt binds the exact smoke marker,
+persisted model/effort, unchanged declared scope, and closed lifecycle, and the
+generator uniquely locates and reparses the matching rollout.
+The owner-invoked foreground launcher may persist only Codex's normal session
+rollout and one private root receipt; it must not modify global config,
+installed roles/runtime, auth, or start a background provider.
 
 Treat Q10 scopes as declared routing evidence, not observed file-read telemetry.
 Require distinct non-empty task messages plus persisted child role, model,

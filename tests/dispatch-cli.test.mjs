@@ -112,7 +112,21 @@ async function fixture(t, {
         }
       : null;
     const policyPath = join(home, "gearbox", "dispatch-policy.json");
-    const policyValue = createDispatchPolicy({ mode: policyMode, allowTypedBridge: false, activation });
+    const policyValue = createDispatchPolicy({
+      mode: policyMode,
+      allowTypedBridge: false,
+      activation,
+      ...(policyMode === "active" && activationKind === "current" ? {
+        rootProvider: {
+          kind: "app_server_root",
+          enabled: true,
+          transport: "stdio",
+          protocolVersion: 1,
+          launcherPath: join(home, "bin", "gearbox-root"),
+          acceptanceBindingSha256: "a".repeat(64),
+        },
+      } : {}),
+    });
     const source = serializeDispatchPolicy(policyValue);
     await writeFile(
       policyPath,
@@ -221,6 +235,21 @@ max_depth = 1
         afterSha256: wrapperDigest,
         targetSha256: wrapperDigest,
       });
+      if (activationKind === "current") {
+        const rootWrapperSource = "#!/bin/sh\nexit 0\n";
+        const rootWrapperDigest = createHash("sha256").update(rootWrapperSource).digest("hex");
+        const rootWrapperPath = join(home, "bin", "gearbox-root");
+        await writeFile(rootWrapperPath, rootWrapperSource, { mode: 0o755 });
+        files.push({
+          kind: "dispatch-root-wrapper",
+          sourcePath: join(home, "scripts", "gearbox-root"),
+          targetPath: rootWrapperPath,
+          mode: 0o755,
+          sourceSha256: rootWrapperDigest,
+          afterSha256: rootWrapperDigest,
+          targetSha256: rootWrapperDigest,
+        });
+      }
       const manifest = {
         schemaVersion: 1,
         generatedAt: "2026-07-15T00:00:00.000Z",
@@ -468,6 +497,11 @@ test("current active status survives report cleanup and validates only durable i
   const status = jsonOnly(active);
   assert.equal(status.mode, "active");
   assert.equal(status.integrity, "pass");
+  assert.deepEqual(status.rootProvider, {
+    kind: "app_server_root",
+    enabled: true,
+    acceptanceBound: true,
+  });
   assert.equal(status.activationRecordSha256, createHash("sha256").update(recordSource).digest("hex"));
   assert.doesNotMatch(active.stdout, /recordPath|activations|manifestPath|reports/);
 
@@ -477,6 +511,15 @@ test("current active status survives report cleanup and validates only durable i
   assertOff(
     await run(["status"], { CODEX_HOME: home }),
     "ACTIVATION_RECORD_IDENTITY_DRIFT",
+  );
+  await writeFile(recordPath, recordSource, { mode: 0o600 });
+
+  const bindingDrift = JSON.parse(recordSource);
+  bindingDrift.activation.acceptanceBindingSha256 = "f".repeat(64);
+  await writeFile(recordPath, `${JSON.stringify(bindingDrift)}\n`, { mode: 0o600 });
+  assertOff(
+    await run(["status"], { CODEX_HOME: home }),
+    "ROOT_PROVIDER_ACCEPTANCE_BINDING_DRIFT",
   );
   await writeFile(recordPath, recordSource, { mode: 0o600 });
 
@@ -519,7 +562,11 @@ test("active policy requires its applied manifest before planning", async (t) =>
   assert.deepEqual(Object.keys(activeStatus.roleHashes).sort(), ROLE_SPECS.map((spec) => spec.name).sort());
   assert.deepEqual(
     Object.keys(activeStatus.runtimeHashes).sort(),
-    [...DISPATCH_RUNTIME_FILES, "scripts/gearbox-dispatch"].sort(),
+    [
+      ...DISPATCH_RUNTIME_FILES,
+      "scripts/gearbox-dispatch",
+      ...(activeStatus.rootProvider ? ["scripts/gearbox-root"] : []),
+    ].sort(),
   );
   assert.doesNotMatch(valid.stdout, /manifestPath|install-manifest|\/Users\//);
   const policy = JSON.parse(await readFile(join(home, "gearbox", "dispatch-policy.json"), "utf8"));

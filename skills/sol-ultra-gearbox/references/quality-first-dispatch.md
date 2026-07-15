@@ -95,16 +95,28 @@ until ten comparable root-inclusive real-work pairs exist.
 
 For a legacy activation without a scoped snapshot, bind root model and effort
 to the persisted activation smoke and enforce the strict safe contract for the
-remaining semantic values. A future apply captures the complete scoped
+remaining semantic values. Every new apply captures the complete scoped
 snapshot and exact semantic equality.
 
-The repo-level `app_thread_root` provider contract is not an enabled execution
-shape. It requires an owner-authorized lower-layer App Server host, project
-create/read/follow-up/archive tools, turn-start model and effort selection,
-trusted actual runtime evidence, verified write scope, deterministic close,
-and current paid acceptance. Any missing fact yields a reason-coded
-`root_inline` fallback. Treat that as a safe non-execution result, not as proof
-that automatic root routing succeeded.
+Policy v2 may enable `app_server_root` only through the installed foreground
+`gearbox-root` launcher. It classifies an owned packet before the first turn,
+passes the selected Sol model and effort to `turn/start`, rejects interactive
+authority expansion, verifies persisted rollout identity and every workspace
+change against the declared write scope, performs `thread/read`, archives and
+unsubscribes, and requires App Server to exit cleanly. The private receipt and
+paid-acceptance runtime binding are policy-bound. Any missing fact yields a
+reason-coded `root_inline` fallback without starting a turn. This is not stock
+Desktop interception, and workflow-stage `app_thread_root` remains disabled.
+The independent workflow-adapter gate runs before host discovery. Host
+capability comes only from an exact initialize response plus a compatible
+runtime-bound App Server version; an unknown version closes before
+`thread/start` and falls back. Close is bounded through stdin EOF, SIGTERM
+grace, and SIGKILL.
+The no-turn handshake proves transport only. Fresh runtime evidence requires an
+owner-authorized paid `gearbox-root smoke` after activation, and its private
+receipt must bind the fixed result marker plus persisted route, scope, usage,
+readback, archive, unsubscribe, and clean-exit evidence. Release generation
+must uniquely locate and reparse the matching rollout before publishing pass.
 
 Before reporting an applied active policy, require a persisted fresh CLI root
 on `gpt-5.6-sol` at Max or Ultra effort. This is an isolated CLI quality-floor

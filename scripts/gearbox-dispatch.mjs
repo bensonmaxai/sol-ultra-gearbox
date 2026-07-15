@@ -24,8 +24,15 @@ import { readOwnedPacket } from "../lib/owned-packet.mjs";
 import { runWorkflowNext, workflowOutputIsUnsafe } from "../lib/workflow-cli.mjs";
 
 const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), ".codex");
+const APP_SERVER_RUNTIME_FILES = new Set([
+  "lib/app-server-root-provider.mjs",
+  "scripts/gearbox-root.mjs",
+]);
+const PRE_APP_SERVER_RUNTIME_FILES = Object.freeze(
+  DISPATCH_RUNTIME_FILES.filter((path) => !APP_SERVER_RUNTIME_FILES.has(path)),
+);
 const LEGACY_DISPATCH_RUNTIME_FILES = Object.freeze(
-  DISPATCH_RUNTIME_FILES.filter((path) => path !== "docs/workflow-contract-evidence.json"),
+  PRE_APP_SERVER_RUNTIME_FILES.filter((path) => path !== "docs/workflow-contract-evidence.json"),
 );
 
 const INTEGRITY_COMPONENTS = Object.freeze([
@@ -156,6 +163,10 @@ async function activeRecordEvidence(policy) {
       typeof activation?.recordPath !== "string") {
       return failure("policy", "POLICY_ACTIVE_CONTRACT_DRIFT");
     }
+    if (policy.schemaVersion === 2 &&
+      policy.rootProvider?.launcherPath !== join(CODEX_HOME, "bin", "gearbox-root")) {
+      return failure("policy", "ROOT_LAUNCHER_POLICY_DRIFT");
+    }
     pass("policy", "POLICY_INTEGRITY_PASS");
     currentComponent = "manifest";
     const recordPath = activeActivationRecordPath(CODEX_HOME, activation.installId);
@@ -185,6 +196,11 @@ async function activeRecordEvidence(policy) {
     const record = JSON.parse(recordSource);
     if (!validateActiveActivationRecord(record, { codexHome: CODEX_HOME, policy }).pass) {
       return failure("manifest", "ACTIVATION_RECORD_IDENTITY_DRIFT");
+    }
+    if (policy.schemaVersion === 2 &&
+      policy.rootProvider.acceptanceBindingSha256 !==
+        record.activation.acceptanceBindingSha256) {
+      return failure("policy", "ROOT_PROVIDER_ACCEPTANCE_BINDING_DRIFT");
     }
     pass("manifest", "ACTIVATION_RECORD_INTEGRITY_PASS");
 
@@ -321,6 +337,12 @@ async function activeRecordEvidence(policy) {
     pass("launcher", "LAUNCHER_INTEGRITY_PASS", launcherSha256.checks);
 
     currentComponent = "runtime";
+    const appServerEnabled = policy.schemaVersion === 2 &&
+      policy.rootProvider?.kind === "app_server_root" &&
+      policy.rootProvider?.enabled === true;
+    const requiredRuntimeFiles = appServerEnabled
+      ? DISPATCH_RUNTIME_FILES
+      : PRE_APP_SERVER_RUNTIME_FILES;
     const expected = [
       {
         kind: "dispatch-policy",
@@ -328,7 +350,7 @@ async function activeRecordEvidence(policy) {
         mode: 0o600,
         publicPath: null,
       },
-      ...DISPATCH_RUNTIME_FILES.map((path) => ({
+      ...requiredRuntimeFiles.map((path) => ({
         kind: "dispatch-runtime",
         targetPath: join(CODEX_HOME, "gearbox", "runtime", path),
         mode: 0o644,
@@ -340,6 +362,12 @@ async function activeRecordEvidence(policy) {
         mode: 0o755,
         publicPath: "scripts/gearbox-dispatch",
       },
+      ...(appServerEnabled ? [{
+        kind: "dispatch-root-wrapper",
+        targetPath: join(CODEX_HOME, "bin", "gearbox-root"),
+        mode: 0o755,
+        publicPath: "scripts/gearbox-root",
+      }] : []),
     ];
     const dispatchFiles = record.files.filter((entry) => entry.kind.startsWith("dispatch-"));
     if (dispatchFiles.length !== expected.length) {
@@ -381,7 +409,7 @@ async function activeRecordEvidence(policy) {
     pass("runtime", "RUNTIME_INTEGRITY_PASS", {
       completeInventory: true,
       coreInventoryPresent: true,
-      installedFileCount: DISPATCH_RUNTIME_FILES.length,
+      installedFileCount: requiredRuntimeFiles.length,
     });
     pass("permissions", "PERMISSION_INTEGRITY_PASS");
 
@@ -399,6 +427,11 @@ async function activeRecordEvidence(policy) {
       roleHashes,
       launcherSha256: launcherSha256.digest,
       runtimeHashes,
+      rootProvider: appServerEnabled ? {
+        kind: "app_server_root",
+        enabled: true,
+        acceptanceBound: true,
+      } : null,
     } };
   } catch {
     return failure(currentComponent, "ACTIVE_INTEGRITY_READ_FAILED");
@@ -437,6 +470,10 @@ async function legacyActiveManifestEvidence(policy) {
   try {
     if (policy?.mode !== "active" || policy?.allowTypedBridge !== false) {
       return failure("policy", "POLICY_ACTIVE_CONTRACT_DRIFT");
+    }
+    if (policy.schemaVersion === 2 &&
+      policy.rootProvider?.launcherPath !== join(CODEX_HOME, "bin", "gearbox-root")) {
+      return failure("policy", "ROOT_LAUNCHER_POLICY_DRIFT");
     }
     pass("policy", "POLICY_INTEGRITY_PASS");
     currentComponent = "manifest";
@@ -478,6 +515,11 @@ async function legacyActiveManifestEvidence(policy) {
         manifest.activation?.workflowContractEvidenceSha256 ?? "",
       )
     ) return failure("manifest", "ACTIVATION_MANIFEST_IDENTITY_DRIFT");
+    if (policy.schemaVersion === 2 &&
+      policy.rootProvider.acceptanceBindingSha256 !==
+        manifest.activation.acceptanceBindingSha256) {
+      return failure("policy", "ROOT_PROVIDER_ACCEPTANCE_BINDING_DRIFT");
+    }
     const workflowContract = await readCurrentWorkflowContractEvidence(repositoryRoot);
     if (
       workflowContract.sha256 !==
@@ -652,18 +694,28 @@ async function legacyActiveManifestEvidence(policy) {
       "runtime",
       "docs/workflow-contract-evidence.json",
     );
-    const requiredRuntimeInventory = manifest.files.some((entry) =>
-      entry?.kind === "dispatch-runtime" && entry.targetPath === workflowContractRuntimePath,
-    ) ? DISPATCH_RUNTIME_FILES : LEGACY_DISPATCH_RUNTIME_FILES;
+    const appServerEnabled = policy.schemaVersion === 2 &&
+      policy.rootProvider?.kind === "app_server_root" &&
+      policy.rootProvider?.enabled === true;
+    const requiredRuntimeInventory = appServerEnabled
+      ? DISPATCH_RUNTIME_FILES
+      : manifest.files.some((entry) =>
+          entry?.kind === "dispatch-runtime" && entry.targetPath === workflowContractRuntimePath,
+        )
+        ? PRE_APP_SERVER_RUNTIME_FILES
+        : LEGACY_DISPATCH_RUNTIME_FILES;
     const dispatchFiles = manifest.files.filter((entry) => entry?.kind?.startsWith("dispatch-"));
     const policyFiles = dispatchFiles.filter((entry) => entry.kind === "dispatch-policy");
     const runtimeFiles = dispatchFiles.filter((entry) => entry.kind === "dispatch-runtime");
     const wrapperFiles = dispatchFiles.filter((entry) => entry.kind === "dispatch-wrapper");
+    const rootWrapperFiles = dispatchFiles.filter((entry) => entry.kind === "dispatch-root-wrapper");
     if (
       policyFiles.length !== 1 ||
       wrapperFiles.length !== 1 ||
+      rootWrapperFiles.length !== (appServerEnabled ? 1 : 0) ||
       runtimeFiles.length < requiredRuntimeInventory.length ||
-      dispatchFiles.length !== policyFiles.length + runtimeFiles.length + wrapperFiles.length
+      dispatchFiles.length !==
+        policyFiles.length + runtimeFiles.length + wrapperFiles.length + rootWrapperFiles.length
     ) {
       return failure("runtime", "RUNTIME_INVENTORY_DRIFT");
     }
@@ -746,6 +798,26 @@ async function legacyActiveManifestEvidence(policy) {
       });
     }
     runtimeHashes["scripts/gearbox-dispatch"] = wrapperInstalled.digest;
+    if (appServerEnabled) {
+      const [rootWrapperFile] = rootWrapperFiles;
+      if (
+        rootWrapperFile.sourcePath !== join(repositoryRootInput, "scripts", "gearbox-root") ||
+        rootWrapperFile.targetPath !== join(CODEX_HOME, "bin", "gearbox-root") ||
+        rootWrapperFile.mode !== 0o755
+      ) return failure("runtime", "ROOT_LAUNCHER_IDENTITY_DRIFT");
+      const rootWrapperInstalled = await installedDigest(
+        rootWrapperFile.targetPath,
+        rootWrapperFile.mode,
+        [rootWrapperFile.sourceSha256, rootWrapperFile.targetSha256, rootWrapperFile.afterSha256],
+      );
+      if (!rootWrapperInstalled.pass) {
+        return failure("runtime", "ROOT_LAUNCHER_INTEGRITY_DRIFT", {
+          checks: rootWrapperInstalled.checks,
+          permissionRelated: !rootWrapperInstalled.checks.modeMatches,
+        });
+      }
+      runtimeHashes["scripts/gearbox-root"] = rootWrapperInstalled.digest;
+    }
     pass("runtime", "RUNTIME_INTEGRITY_PASS", {
       completeInventory: true,
       coreInventoryPresent: true,
@@ -765,6 +837,11 @@ async function legacyActiveManifestEvidence(policy) {
       roleHashes,
       launcherSha256: launcherInstalled.digest,
       runtimeHashes,
+      rootProvider: appServerEnabled ? {
+        kind: "app_server_root",
+        enabled: true,
+        acceptanceBound: true,
+      } : null,
     } };
   } catch {
     return failure(currentComponent, "ACTIVE_INTEGRITY_READ_FAILED");

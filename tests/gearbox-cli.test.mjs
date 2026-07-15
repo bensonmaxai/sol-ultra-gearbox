@@ -10,6 +10,7 @@ import {
   rollbackConfig,
   sha256,
 } from "../lib/gearbox.mjs";
+import { mcpConfigDoctorPasses } from "../scripts/gearbox.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const CLI = join(REPO_ROOT, "scripts", "gearbox.mjs");
@@ -26,6 +27,50 @@ const WORKFLOW_RUNTIME_FILES = [
   "lib/owned-packet.mjs",
   "lib/workflow-cli.mjs",
 ];
+
+test("doctor accepts only the explicit optional MCP reachability warning", () => {
+  assert.equal(mcpConfigDoctorPasses({ status: "ok" }), true);
+  assert.equal(mcpConfigDoctorPasses({
+    status: "warning",
+    summary: "MCP configuration has optional issues",
+    details: {
+      "configured servers": "1",
+      "disabled servers": "0",
+      "optional reachability failed": "fixture endpoint unavailable",
+      "stdio servers": "0",
+      "streamable_http servers": "1",
+    },
+  }), true);
+  assert.equal(mcpConfigDoctorPasses({
+    status: "warning",
+    summary: "MCP configuration has optional issues",
+    details: {},
+  }), false);
+  assert.equal(mcpConfigDoctorPasses({
+    status: "warning",
+    summary: "MCP configuration is invalid",
+    details: {
+      "configured servers": "1",
+      "disabled servers": "0",
+      "optional reachability failed": "fixture endpoint unavailable",
+      "stdio servers": "0",
+      "streamable_http servers": "1",
+    },
+  }), false);
+  assert.equal(mcpConfigDoctorPasses({
+    status: "warning",
+    summary: "MCP configuration has optional issues",
+    details: {
+      "configured servers": "1",
+      "disabled servers": "0",
+      "optional reachability failed": "fixture endpoint unavailable",
+      "stdio servers": "0",
+      "streamable_http servers": "1",
+      "permission problem": "present",
+    },
+  }), false);
+  assert.equal(mcpConfigDoctorPasses({ status: "fail" }), false);
+});
 
 async function tree(root) {
   const output = {};
@@ -77,7 +122,7 @@ const args = process.argv.slice(2);
 if (args[0] === "features" && args[1] === "list") {
   process.stdout.write("multi_agent stable true\\nmulti_agent_v2 under development true\\n");
 } else if (args[0] === "doctor" && args[1] === "--json") {
-  process.stdout.write(JSON.stringify({ checks: { "config.load": { status: "ok" }, "mcp.config": { status: "ok" }, installation: { status: "ok" } } }));
+  process.stdout.write(JSON.stringify({ checks: { "config.load": { status: "ok" }, "mcp.config": { status: "warning", summary: "MCP configuration has optional issues", details: { "configured servers": "1", "disabled servers": "0", "optional reachability failed": "fixture endpoint unavailable", "stdio servers": "0", "streamable_http servers": "1" } }, installation: { status: "ok" } } }));
 } else {
   process.stdout.write("codex-cli 1.2.3\\n");
 }
@@ -97,6 +142,13 @@ if (args[0] === "features" && args[1] === "list") {
   assert.equal(report.changes.dispatch.mode, "active");
   assert.equal(report.changes.dispatch.acceptanceRequired, true);
   assert.equal(report.changes.dispatch.acceptanceValidated, false);
+  assert.deepEqual(report.changes.dispatch.rootProvider, {
+    kind: "app_server_root",
+    enabled: true,
+    transport: "stdio",
+    protocolVersion: 1,
+    acceptanceBound: true,
+  });
   assert.deepEqual(
     WORKFLOW_RUNTIME_FILES,
     report.changes.dispatch.runtime
@@ -104,6 +156,8 @@ if (args[0] === "features" && args[1] === "list") {
       .filter((path) => WORKFLOW_RUNTIME_FILES.includes(path)),
   );
   assert.ok(report.changes.dispatch.runtime.every((entry) => /^[a-f0-9]{64}$/.test(entry.sha256)));
+  assert.equal(report.changes.dispatch.rootWrapper.path, "scripts/gearbox-root");
+  assert.match(report.changes.dispatch.rootWrapper.sha256, /^[a-f0-9]{64}$/);
   assert.deepEqual(after, before);
 });
 

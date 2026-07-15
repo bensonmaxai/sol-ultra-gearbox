@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -13,12 +13,26 @@ import {
   validateActiveConfigBinding,
   validateActiveInstallationSummary,
   validateReleaseEvidence,
+  validateRootProviderSummary,
   validateWorkflowContractSummary,
 } from "../lib/release-evidence.mjs";
 import {
   chooseLatestCurrentReportSet,
   publicLatestCurrentSelection,
+  validateRootProviderSmokeReceipt,
+  verifyRootProviderRollout,
 } from "../scripts/release-evidence.mjs";
+import {
+  APP_SERVER_ROOT_SMOKE_MARKER,
+  appServerRootScopeBinding,
+  createAppServerRootSmokePacket,
+} from "../lib/app-server-root-provider.mjs";
+import { ROLE_SPECS, sha256 } from "../lib/gearbox.mjs";
+import {
+  hashTaskPacket,
+  renderTaskMessage,
+  selectModelRoute,
+} from "../lib/dispatch-planner.mjs";
 
 function sourceManifest(overrides = {}) {
   return createSourceManifest({
@@ -89,6 +103,22 @@ function evidence(source = sourceManifest()) {
         activeEligible: true,
         runtimeBindingSha256: "b".repeat(64),
       },
+      rootProvider: {
+        status: "pass",
+        provider: "app_server_root",
+        model: "gpt-5.6-sol",
+        effort: "low",
+        reasonCode: "APP_SERVER_ROOT_RUNTIME_VERIFIED",
+        taskHash: "1".repeat(64),
+        receiptSha256: "2".repeat(64),
+        policySha256: "c".repeat(64),
+        smokeTaskBound: true,
+        rolloutReverified: true,
+        scopeVerified: true,
+        lifecycleClosed: true,
+        persistedRuntime: true,
+        tokenUsagePersisted: true,
+      },
     },
     workflowContract: {
       deterministicScenarioCount: 5,
@@ -155,9 +185,176 @@ test("release evidence validates exact source and rendered Markdown", () => {
   assert.equal(result.pass, true);
   assert.equal(result.checks.acceptanceExam, true);
   assert.equal(result.checks.activeInstallation, true);
+  assert.equal(result.checks.rootProvider, true);
   assert.equal(result.checks.workflowContract, true);
   assert.match(markdown, /Writing-skills pressure test: PASS \(5 RED, 5 GREEN\)/);
   assert.match(markdown, /Verified workflow contract: PASS \(5\/5\).*Q10 canary: verified/i);
+  assert.match(markdown, /App Server root launcher: PASS/i);
+});
+
+test("root provider release summary requires persisted runtime, scope, and lifecycle evidence", () => {
+  const value = evidence().runtime.rootProvider;
+  assert.equal(validateRootProviderSummary(value).pass, true);
+  for (const field of [
+    "smokeTaskBound", "rolloutReverified", "scopeVerified", "lifecycleClosed",
+    "persistedRuntime", "tokenUsagePersisted",
+  ]) {
+    assert.equal(validateRootProviderSummary({ ...value, [field]: false }).pass, false);
+  }
+  assert.equal(validateRootProviderSummary({ ...value, effort: "high" }).pass, false);
+  assert.equal(validateRootProviderSummary({ ...value, threadId: "private" }).pass, false);
+});
+
+test("release generation accepts only the fixed App Server root smoke marker", () => {
+  const smokePacket = createAppServerRootSmokePacket();
+  const scopeBinding = appServerRootScopeBinding(smokePacket);
+  const smokeRoute = selectModelRoute({ packet: smokePacket, roleSpecs: ROLE_SPECS }).root;
+  const receipt = {
+    schemaVersion: 1,
+    kind: "gearbox-app-server-root-receipt",
+    status: "pass",
+    reasonCode: "APP_SERVER_ROOT_RUNTIME_VERIFIED",
+    startedAt: "2026-07-16T00:00:00.000Z",
+    completedAt: "2026-07-16T00:00:01.000Z",
+    taskHash: hashTaskPacket(smokePacket),
+    policySha256: "2".repeat(64),
+    route: smokeRoute,
+    provider: {
+      kind: "app_server_root",
+      transport: "stdio",
+      serverVersion: "0.144.2",
+      threadIdSha256: "3".repeat(64),
+      turnIdSha256: "4".repeat(64),
+      modelProvider: "openai",
+    },
+    scope: {
+      cwdSha256: "5".repeat(64),
+      readScopeSha256: scopeBinding.readScopeSha256,
+      writeScopeSha256: scopeBinding.writeScopeSha256,
+      changedPathCount: 0,
+      changes: [],
+      verified: true,
+    },
+    runtime: {
+      rolloutSha256: "8".repeat(64),
+      resultSha256: sha256(APP_SERVER_ROOT_SMOKE_MARKER),
+      checks: {
+        persisted: true,
+        identityMatches: true,
+        cwdMatches: true,
+        modelMatches: true,
+        effortMatches: true,
+        taskMessageMatches: true,
+        tokenUsagePersisted: true,
+      },
+      tokenUsage: { total_tokens: 1 },
+    },
+    lifecycle: {
+      initialized: true,
+      threadStarted: true,
+      turnStarted: true,
+      turnCompleted: true,
+      readback: true,
+      archived: true,
+      unsubscribed: true,
+      serverRequestObserved: false,
+      serverExitCode: 0,
+      serverExitSignal: null,
+    },
+    diagnostics: { stderrBytes: 0, stderrSha256: "9".repeat(64) },
+  };
+  assert.equal(validateRootProviderSmokeReceipt(receipt, {
+    policySha256: receipt.policySha256,
+  }).pass, true);
+  receipt.taskHash = "1".repeat(64);
+  assert.equal(validateRootProviderSmokeReceipt(receipt, {
+    policySha256: receipt.policySha256,
+  }).pass, false);
+  receipt.taskHash = hashTaskPacket(smokePacket);
+  receipt.runtime.resultSha256 = sha256("WRONG_MARKER");
+  assert.equal(validateRootProviderSmokeReceipt(receipt, {
+    policySha256: receipt.policySha256,
+  }).pass, false);
+});
+
+test("release generation reverifies the fixed task against the persisted rollout", async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "gearbox-root-rollout-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const sessionsRoot = join(root, "sessions");
+  const rolloutPath = join(sessionsRoot, "fixture", "rollout.jsonl");
+  await mkdir(join(sessionsRoot, "fixture"), { recursive: true });
+  const smokePacket = createAppServerRootSmokePacket();
+  const scopeBinding = appServerRootScopeBinding(smokePacket);
+  const smokeRoute = selectModelRoute({ packet: smokePacket, roleSpecs: ROLE_SPECS }).root;
+  const threadId = "release-thread";
+  const cwd = "/private/tmp/gearbox-release-cwd";
+  const events = [
+    { type: "session_meta", payload: { id: threadId, cwd, thread_source: "appServer" } },
+    { type: "turn_context", payload: { model: "gpt-5.6-sol", effort: "low" } },
+    { type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { total_tokens: 7 } } } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: renderTaskMessage(smokePacket) }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: APP_SERVER_ROOT_SMOKE_MARKER }] } },
+  ];
+  const source = `${events.map(JSON.stringify).join("\n")}\n`;
+  await writeFile(rolloutPath, source);
+  const now = Date.now();
+  const receipt = {
+    schemaVersion: 1,
+    kind: "gearbox-app-server-root-receipt",
+    status: "pass",
+    reasonCode: "APP_SERVER_ROOT_RUNTIME_VERIFIED",
+    startedAt: new Date(now - 1_000).toISOString(),
+    completedAt: new Date(now + 1_000).toISOString(),
+    taskHash: hashTaskPacket(smokePacket),
+    policySha256: "2".repeat(64),
+    route: smokeRoute,
+    provider: {
+      kind: "app_server_root",
+      transport: "stdio",
+      serverVersion: "0.144.2",
+      threadIdSha256: sha256(threadId),
+      turnIdSha256: "4".repeat(64),
+      modelProvider: "openai",
+    },
+    scope: {
+      cwdSha256: sha256(cwd),
+      ...scopeBinding,
+      changedPathCount: 0,
+      changes: [],
+      verified: true,
+    },
+    runtime: {
+      rolloutSha256: sha256(source),
+      resultSha256: sha256(APP_SERVER_ROOT_SMOKE_MARKER),
+      checks: {
+        persisted: true,
+        identityMatches: true,
+        cwdMatches: true,
+        modelMatches: true,
+        effortMatches: true,
+        taskMessageMatches: true,
+        tokenUsagePersisted: true,
+      },
+      tokenUsage: { total_tokens: 7 },
+    },
+    lifecycle: {
+      initialized: true,
+      threadStarted: true,
+      turnStarted: true,
+      turnCompleted: true,
+      readback: true,
+      archived: true,
+      unsubscribed: true,
+      serverRequestObserved: false,
+      serverExitCode: 0,
+      serverExitSignal: null,
+    },
+    diagnostics: { stderrBytes: 0, stderrSha256: "9".repeat(64) },
+  };
+  const verification = await verifyRootProviderRollout(receipt, { sessionsRoot });
+  assert.equal(verification.pass, true, JSON.stringify(verification.checks));
+  receipt.runtime.resultSha256 = sha256("WRONG_MARKER");
+  assert.equal((await verifyRootProviderRollout(receipt, { sessionsRoot })).pass, false);
 });
 
 test("release evidence requires the exact five-scenario workflow summary and Q10 canary", () => {

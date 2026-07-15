@@ -34,6 +34,25 @@ function legacyActivePolicy() {
   });
 }
 
+function appServerActivePolicy() {
+  return createDispatchPolicy({
+    mode: "active",
+    allowTypedBridge: false,
+    activation: {
+      installId: "20260716-app-server",
+      recordPath: "/tmp/example/gearbox/activations/20260716-app-server.json",
+    },
+    rootProvider: {
+      kind: "app_server_root",
+      enabled: true,
+      transport: "stdio",
+      protocolVersion: 1,
+      launcherPath: "/tmp/example/bin/gearbox-root",
+      acceptanceBindingSha256: "e".repeat(64),
+    },
+  });
+}
+
 async function writePolicy(root, value) {
   const path = join(root, "dispatch-policy.json");
   await writeFile(path, `${JSON.stringify(value)}\n`);
@@ -86,6 +105,22 @@ test("legacy manifest activation remains readable during the re-activation gap",
   const policy = legacyActivePolicy();
   assert.equal(validateDispatchPolicy(policy).pass, true);
   assert.deepEqual(assertManagedPolicyTarget(serializeDispatchPolicy(policy)), policy);
+});
+
+test("policy v2 integrity-binds an active App Server root launcher", () => {
+  const policy = appServerActivePolicy();
+  assert.equal(policy.schemaVersion, 2);
+  assert.equal(validateDispatchPolicy(policy).pass, true);
+  assert.deepEqual(assertManagedPolicyTarget(serializeDispatchPolicy(policy)), policy);
+  for (const rootProvider of [
+    { ...policy.rootProvider, enabled: false },
+    { ...policy.rootProvider, kind: "app_thread_root" },
+    { ...policy.rootProvider, transport: "tcp" },
+    { ...policy.rootProvider, launcherPath: "relative" },
+    { ...policy.rootProvider, acceptanceBindingSha256: "invalid" },
+  ]) {
+    assert.equal(validateDispatchPolicy({ ...policy, rootProvider }).pass, false);
+  }
 });
 
 test("missing, malformed, and tampered policy files resolve off", async () => {

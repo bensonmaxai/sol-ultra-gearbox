@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+CODEX_HOME_DIR="${CODEX_HOME:-${HOME}/.codex}"
+exec node "$CODEX_HOME_DIR/gearbox/runtime/scripts/gearbox-root.mjs" "$@"

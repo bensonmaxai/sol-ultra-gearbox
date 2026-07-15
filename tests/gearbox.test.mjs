@@ -472,16 +472,23 @@ test("skill pressure tester is installed but never exposed as a typed child", ()
 test("managed dispatch runtime is bound into the installer and packaged with the exact wrapper", async () => {
   const installer = await readFile(join(REPO_ROOT, "scripts", "gearbox.mjs"), "utf8");
   const wrapper = await readFile(join(REPO_ROOT, "scripts", "gearbox-dispatch"), "utf8");
+  const rootWrapper = await readFile(join(REPO_ROOT, "scripts", "gearbox-root"), "utf8");
   const wrapperMode = (await stat(join(REPO_ROOT, "scripts", "gearbox-dispatch"))).mode & 0o777;
+  const rootWrapperMode = (await stat(join(REPO_ROOT, "scripts", "gearbox-root"))).mode & 0o777;
   assert.match(installer, /DISPATCH_RUNTIME_FILES/);
   assert.match(installer, /scripts\/gearbox-dispatch/);
   assert.match(installer, /dispatchMode/);
   assert.match(installer, /randomBytes/);
   assert.doesNotMatch(installer, /GEARBOX_SKILL_GUIDANCE_7F3C9A/);
   assert.equal(wrapperMode, 0o755);
+  assert.equal(rootWrapperMode, 0o755);
   assert.equal(
     wrapper,
     "#!/usr/bin/env bash\nset -euo pipefail\nCODEX_HOME_DIR=\"${CODEX_HOME:-${HOME}/.codex}\"\nexec node \"$CODEX_HOME_DIR/gearbox/runtime/scripts/gearbox-dispatch.mjs\" \"$@\"\n",
+  );
+  assert.equal(
+    rootWrapper,
+    "#!/usr/bin/env bash\nset -euo pipefail\nCODEX_HOME_DIR=\"${CODEX_HOME:-${HOME}/.codex}\"\nexec node \"$CODEX_HOME_DIR/gearbox/runtime/scripts/gearbox-root.mjs\" \"$@\"\n",
   );
 });
 
@@ -497,6 +504,7 @@ test("all runtime evidence collectors use the one exact unique source inventory"
     "scripts/workflow-contract-evidence.mjs",
     "docs/workflow-contract-evidence.json",
     "scripts/gearbox-dispatch",
+    "scripts/gearbox-root",
   ].filter((path, index, paths) => paths.indexOf(path) === index));
   const [gearboxScript, releaseEvidenceScript] = await Promise.all([
     readFile(join(REPO_ROOT, "scripts", "gearbox.mjs"), "utf8"),
@@ -583,7 +591,7 @@ test("dispatch runtime install reads back exact targets and rollback restores a 
     dispatchMode: "shadow",
   });
   assert.equal(manifest.policyMode, "shadow");
-  assert.equal(manifest.files.length, DISPATCH_RUNTIME_FILES.length + 2);
+  assert.equal(manifest.files.length, DISPATCH_RUNTIME_FILES.length + 3);
   for (const entry of manifest.files) {
     const metadata = await stat(entry.targetPath);
     assert.equal(metadata.mode & 0o777, entry.mode);
@@ -594,6 +602,7 @@ test("dispatch runtime install reads back exact targets and rollback restores a 
   assert.equal(runtime.length, DISPATCH_RUNTIME_FILES.length);
   assert.ok(runtime.every((entry) => entry.mode === 0o644));
   assert.equal(manifest.files.find((entry) => entry.kind === "dispatch-wrapper").mode, 0o755);
+  assert.equal(manifest.files.find((entry) => entry.kind === "dispatch-root-wrapper").mode, 0o755);
   assert.equal(manifest.files.find((entry) => entry.kind === "dispatch-policy").mode, 0o600);
 
   await chmod(runtime[0].targetPath, 0o600);
@@ -723,7 +732,19 @@ test("active activation record is private, persistent, and detached from reposit
       writingSkillsEvidenceSha256: "c".repeat(64),
       workflowContractEvidenceSha256: "d".repeat(64),
     },
-    config: { path: join(home, "config.toml"), mode: 0o600, afterSha256: digest },
+    config: {
+      path: join(home, "config.toml"),
+      mode: 0o600,
+      afterSha256: digest,
+      integrity: captureActiveConfigIntegrity(
+        renderConfig(
+          'model = "gpt-5.6-sol"\nmodel_reasoning_effort = "ultra"\nsandbox_mode = "workspace-write"\napproval_policy = "on-request"\n\n[agents]\nmax_threads = 3\nmax_depth = 1\n',
+          home,
+          { promoteV2: true },
+        ),
+        home,
+      ),
+    },
     agents: { path: join(home, "AGENTS.md"), mode: 0o644, afterSha256: digest },
     staticChecks: { strictConfig: true, configLoad: true, mcpConfig: true, installation: true },
     postInstallRootSmoke: {
@@ -739,6 +760,7 @@ test("active activation record is private, persistent, and detached from reposit
   assert.equal((await stat(recordPath)).mode & 0o777, 0o600);
   assert.equal((await stat(dirname(recordPath))).mode & 0o777, 0o700);
   assert.equal(validateActiveActivationRecord(persisted.record, { codexHome: home, policy }).pass, true);
+  assert.equal(persisted.record.config.integrity.schemaVersion, 1);
   const source = await readFile(recordPath, "utf8");
   assert.doesNotMatch(source, /private\/tmp|repositoryRoot|manifestPath|sourcePath|backup|sessionId/);
   assert.equal((await verifyActiveActivationRecordForRemoval({

@@ -2,13 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ROLE_SPECS } from "../lib/gearbox.mjs";
 import {
+  APP_SERVER_ROOT_PROVIDER_CAPABILITIES,
   APP_THREAD_EXECUTION_ENABLED,
   APP_THREAD_PROVIDER_CAPABILITIES,
   classifyTaskTopology,
+  evaluateAppServerRootProvider,
   evaluateAppThreadProvider,
   evaluateWorkflowPolicy,
   hashTaskPacket,
   planDispatch,
+  planRootLaunch,
   renderTaskMessage,
   selectModelRoute,
   validateTaskPacket,
@@ -593,4 +596,75 @@ test("App Server thread provider contract fails closed to root-inline without ex
     delegatedExecution: false,
     reasonCode: "APP_THREAD_HOST_UNAVAILABLE",
   });
+});
+
+test("policy-bound App Server root provider selects the classified effort before launch", () => {
+  const policy = {
+    schemaVersion: 2,
+    mode: "active",
+    rootProvider: {
+      kind: "app_server_root",
+      enabled: true,
+      transport: "stdio",
+      protocolVersion: 1,
+      acceptanceBindingSha256: "a".repeat(64),
+    },
+  };
+  const capabilities = Object.fromEntries(
+    APP_SERVER_ROOT_PROVIDER_CAPABILITIES.map((key) => [key, true]),
+  );
+  const ready = evaluateAppServerRootProvider(capabilities, { policy });
+  assert.equal(ready.pass, true);
+  assert.equal(ready.reasonCode, "APP_SERVER_ROOT_PROVIDER_READY");
+
+  for (const [value, effort, shape] of [
+    [packet({ costSignals: { ...packet().costSignals, estimatedRootToolCalls: 1, oneLocation: true } }), "low", "app_server_root"],
+    [packet({ riskSignals: { ...packet().riskSignals, hiddenCoupling: true } }), "max", "app_server_root"],
+    [packet({
+      batch: { requestedChildren: 2, writerCount: 0, scopesDisjoint: true, independentWorkstreams: 2 },
+    }), "ultra", "app_server_root"],
+  ]) {
+    const decision = planRootLaunch({ policy, packet: value, capabilities, roleSpecs: ROLE_SPECS });
+    assert.equal(decision.routing.root.effort, effort);
+    assert.equal(decision.selectedShape, shape);
+    assert.equal(decision.provider.fallbackApplied, false);
+  }
+
+  const unavailableCapabilities = { ...capabilities, closeLifecycleVerifiable: false };
+  const unavailable = planRootLaunch({
+    policy,
+    packet: packet(),
+    capabilities: unavailableCapabilities,
+    roleSpecs: ROLE_SPECS,
+  });
+  assert.equal(unavailable.selectedShape, "root_inline");
+  assert.equal(unavailable.provider.fallbackApplied, true);
+  assert.equal(unavailable.provider.reasonCode, "APP_SERVER_ROOT_LIFECYCLE_UNVERIFIED");
+});
+
+test("App Server root keeps workflow skill policy as an independent pre-host gate", () => {
+  const policy = {
+    schemaVersion: 2,
+    mode: "active",
+    rootProvider: {
+      kind: "app_server_root",
+      enabled: true,
+      transport: "stdio",
+      protocolVersion: 1,
+      acceptanceBindingSha256: "a".repeat(64),
+    },
+  };
+  const capabilities = Object.fromEntries(
+    APP_SERVER_ROOT_PROVIDER_CAPABILITIES.map((key) => [key, true]),
+  );
+  for (const [value, reasonCode] of [
+    [packet({ workflowAdapter: "unknown:fixture" }), "ROOT_UNKNOWN_SKILL"],
+    [packet({ workflowAdapter: "superpowers:writing-skills", ownerOptIn: false }), "ROOT_OWNER_APPROVAL_REQUIRED"],
+  ]) {
+    const decision = planRootLaunch({ policy, packet: value, capabilities, roleSpecs: ROLE_SPECS });
+    assert.equal(decision.selectedShape, "root_inline");
+    assert.equal(decision.reasonCode, reasonCode);
+    assert.deepEqual(decision.workflowPolicy, { pass: false, reasonCode });
+    assert.equal(decision.provider.reasonCode, "APP_SERVER_ROOT_WORKFLOW_POLICY_REJECTED");
+  }
 });

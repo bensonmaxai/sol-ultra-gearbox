@@ -40,6 +40,20 @@ run `gearbox-dispatch plan`. The planner selects exactly one shape:
 | `isolated_role_root` | Read-only Luna/Terra work passes all gates and the isolated runner is verified, but native `agent_type` is unavailable or parent permission cannot be inherited safely; the owner-approved `sol_skill_tester` writing-skills contract also uses this shape. It is always an isolated root, never a child. |
 | `typed_child_bridge` | Disabled in the first active release (`allowTypedBridge=false`); never infer availability. |
 
+An active policy-v2 installation may also expose `app_server_root` through the
+foreground `gearbox-root` launcher. This route runs before a new App Server
+turn, so the classifier—not the owner—selects Sol Low/Medium/Max/Ultra from the
+managed packet. It is accepted only when persisted model/effort, declared
+write scope, readback, archive/unsubscribe, clean host exit, and the
+activation-bound paid acceptance all verify. It is not a workflow-stage shape
+and does not intercept stock Desktop task creation.
+The workflow-adapter policy gate precedes host discovery. Capability is derived
+from the exact initialize response and a compatible runtime-bound App Server
+version; no static all-true host claim is accepted.
+`gearbox-root handshake` does not count as execution. Only the post-activation,
+owner-authorized paid smoke receipt with the fixed result marker counts as
+fresh `app_server_root` runtime evidence.
+
 `off` makes no automatic decision, `shadow` records a root-inline outcome, and
 `active` may execute only the validated decision. Unknown workflow skills and
 unsupported direct core calls are not bridged by this matrix; keep them on Sol.
