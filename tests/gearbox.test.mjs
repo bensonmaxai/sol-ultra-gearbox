@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -16,12 +16,18 @@ import {
   ROLE_SPECS,
   TYPED_ROLE_NAMES,
   WORKFLOW_POLICY,
+  activeActivationRecordPath,
   atomicWrite,
+  captureActiveConfigIntegrity,
   captureConfigRollbackState,
   cleanupProbeArtifacts,
   DISPATCH_RUNTIME_FILES,
   RUNTIME_BINDING_FILES,
+  WORKFLOW_CONTRACT_SOURCE_PATHS,
   installDispatchRuntime,
+  persistActiveActivationRecord,
+  readCurrentWorkflowContractEvidence,
+  removeActiveActivationRecord,
   rollbackDispatchRuntime,
   redactSensitive,
   removeOwnedSmokeProjectEntries,
@@ -32,14 +38,43 @@ import {
   sha256,
   summarizeRollout,
   validateTypedSpawnArgs,
+  validateActiveConfigIntegrity,
   validatePostInstallRootRuntime,
+  validateActiveActivationRecord,
   validateRoleText,
+  verifyActiveActivationRecordForRemoval,
   verifyProbe,
   writeJson,
 } from "../lib/gearbox.mjs";
 import { createDispatchPolicy, serializeDispatchPolicy } from "../lib/dispatch-policy.mjs";
+import { WORKFLOW_CONTRACT_SOURCE_PATHS as EVIDENCE_SOURCE_PATHS } from "../lib/workflow-contract-evidence.mjs";
 
 const REPO_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
+
+const WORKFLOW_RUNTIME_FILES = [
+  "lib/workflow-plan.mjs",
+  "lib/workflow-compiler.mjs",
+  "lib/workflow-state.mjs",
+  "lib/workflow-scheduler.mjs",
+  "lib/workflow-orchestrator.mjs",
+  "lib/private-jsonl.mjs",
+  "lib/workflow-ledger.mjs",
+  "lib/workflow-recovery.mjs",
+  "lib/workflow-outcome.mjs",
+  "lib/owned-packet.mjs",
+  "lib/workflow-cli.mjs",
+];
+
+const RUNTIME_BINDING_ONLY_FILES = [
+  "lib/workflow-contract-evidence.mjs",
+  "scripts/workflow-contract-evidence.mjs",
+];
+
+function relativeImports(source) {
+  return [...source.matchAll(
+    /\b(?:import|export)\s+(?:[^"'`;]*?\s+from\s+)?["'](\.[^"']+)["']/g,
+  )].map((match) => match[1]);
+}
 
 const CONFIG_FIXTURE = `model = "gpt-5.6-sol"
 model_reasoning_effort = "max"
@@ -105,6 +140,60 @@ test("renderConfig is idempotent", () => {
   const once = renderConfig(CONFIG_FIXTURE, "/home/test/.codex");
   const twice = renderConfig(once, "/home/test/.codex");
   assert.equal(twice, once);
+});
+
+test("active config integrity is scoped, strict for owned blocks, and rollback-safe", () => {
+  const activeBase = CONFIG_FIXTURE.replace(
+    'model_reasoning_effort = "max"\n',
+    'model_reasoning_effort = "max"\nsandbox_mode = "workspace-write"\napproval_policy = "on-request"\n',
+  );
+  const installed = renderConfig(activeBase, "/home/test/.codex");
+  const snapshot = captureActiveConfigIntegrity(installed, "/home/test/.codex");
+  assert.doesNotMatch(JSON.stringify(snapshot), /SECRET_KEEP/);
+
+  const unrelated = `${installed.trimEnd()}\n\n[unrelated]\nkeep = true\n`;
+  const unrelatedValidation = validateActiveConfigIntegrity(
+    unrelated,
+    "/home/test/.codex",
+    snapshot,
+  );
+  assert.equal(unrelatedValidation.pass, true);
+  assert.equal(unrelatedValidation.scope, "activation_snapshot");
+
+  const managedDrift = validateActiveConfigIntegrity(
+    installed.replace(
+      "max_concurrent_threads_per_session = 3",
+      "max_concurrent_threads_per_session = 4",
+    ),
+    "/home/test/.codex",
+    snapshot,
+  );
+  assert.equal(managedDrift.pass, false);
+  assert.equal(managedDrift.reasonCode, "CONFIG_MANAGED_BLOCK_DRIFT");
+
+  for (const drift of [
+    installed.replace('model_reasoning_effort = "max"', 'model_reasoning_effort = "high"'),
+    installed.replace('approval_policy = "on-request"', 'approval_policy = "never"'),
+    installed.replace('approval_policy = "on-request"', 'approval_policy = "always"'),
+    installed.replace('sandbox_mode = "workspace-write"', 'sandbox_mode = "danger-full-access"'),
+  ]) {
+    const validation = validateActiveConfigIntegrity(
+      drift,
+      "/home/test/.codex",
+      snapshot,
+    );
+    assert.equal(validation.pass, false);
+    assert.equal(validation.reasonCode, "CONFIG_SAFETY_SEMANTIC_DRIFT");
+  }
+
+  const rollbackState = captureConfigRollbackState(activeBase);
+  const restored = restoreConfigRollbackState(installed, {
+    rollbackState,
+    expectedSha256: sha256(activeBase),
+    codexHome: "/home/test/.codex",
+  });
+  assert.equal(restored.source, activeBase);
+  assert.equal(restored.exact, true);
 });
 
 test("rollbackConfig removes only Gearbox-managed config", () => {
@@ -383,16 +472,23 @@ test("skill pressure tester is installed but never exposed as a typed child", ()
 test("managed dispatch runtime is bound into the installer and packaged with the exact wrapper", async () => {
   const installer = await readFile(join(REPO_ROOT, "scripts", "gearbox.mjs"), "utf8");
   const wrapper = await readFile(join(REPO_ROOT, "scripts", "gearbox-dispatch"), "utf8");
+  const rootWrapper = await readFile(join(REPO_ROOT, "scripts", "gearbox-root"), "utf8");
   const wrapperMode = (await stat(join(REPO_ROOT, "scripts", "gearbox-dispatch"))).mode & 0o777;
+  const rootWrapperMode = (await stat(join(REPO_ROOT, "scripts", "gearbox-root"))).mode & 0o777;
   assert.match(installer, /DISPATCH_RUNTIME_FILES/);
   assert.match(installer, /scripts\/gearbox-dispatch/);
   assert.match(installer, /dispatchMode/);
   assert.match(installer, /randomBytes/);
   assert.doesNotMatch(installer, /GEARBOX_SKILL_GUIDANCE_7F3C9A/);
   assert.equal(wrapperMode, 0o755);
+  assert.equal(rootWrapperMode, 0o755);
   assert.equal(
     wrapper,
     "#!/usr/bin/env bash\nset -euo pipefail\nCODEX_HOME_DIR=\"${CODEX_HOME:-${HOME}/.codex}\"\nexec node \"$CODEX_HOME_DIR/gearbox/runtime/scripts/gearbox-dispatch.mjs\" \"$@\"\n",
+  );
+  assert.equal(
+    rootWrapper,
+    "#!/usr/bin/env bash\nset -euo pipefail\nCODEX_HOME_DIR=\"${CODEX_HOME:-${HOME}/.codex}\"\nexec node \"$CODEX_HOME_DIR/gearbox/runtime/scripts/gearbox-root.mjs\" \"$@\"\n",
   );
 });
 
@@ -404,7 +500,11 @@ test("all runtime evidence collectors use the one exact unique source inventory"
     "scripts/gearbox.mjs",
     "scripts/codex-typed-agent",
     ...DISPATCH_RUNTIME_FILES,
+    "lib/workflow-contract-evidence.mjs",
+    "scripts/workflow-contract-evidence.mjs",
+    "docs/workflow-contract-evidence.json",
     "scripts/gearbox-dispatch",
+    "scripts/gearbox-root",
   ].filter((path, index, paths) => paths.indexOf(path) === index));
   const [gearboxScript, releaseEvidenceScript] = await Promise.all([
     readFile(join(REPO_ROOT, "scripts", "gearbox.mjs"), "utf8"),
@@ -413,6 +513,63 @@ test("all runtime evidence collectors use the one exact unique source inventory"
   for (const source of [gearboxScript, releaseEvidenceScript]) {
     assert.match(source, /RUNTIME_BINDING_FILES/);
     assert.doesNotMatch(source, /const RUNTIME_BINDING_PATHS/);
+  }
+});
+
+test("workflow runtime inventory installs every CLI dependency and binds only deterministic evidence inputs", async () => {
+  for (const path of WORKFLOW_RUNTIME_FILES) {
+    assert.ok(DISPATCH_RUNTIME_FILES.includes(path), path);
+    assert.ok(RUNTIME_BINDING_FILES.includes(path), path);
+    assert.ok(
+      DISPATCH_RUNTIME_FILES.indexOf(path) <
+        DISPATCH_RUNTIME_FILES.indexOf("scripts/gearbox-dispatch.mjs"),
+      `${path} must precede the installed CLI`,
+    );
+  }
+  assert.ok(DISPATCH_RUNTIME_FILES.includes("docs/workflow-contract-evidence.json"));
+  for (const path of RUNTIME_BINDING_ONLY_FILES) {
+    assert.ok(RUNTIME_BINDING_FILES.includes(path), path);
+    assert.equal(DISPATCH_RUNTIME_FILES.includes(path), false, path);
+  }
+  assert.equal(new Set(DISPATCH_RUNTIME_FILES).size, DISPATCH_RUNTIME_FILES.length);
+  assert.equal(new Set(RUNTIME_BINDING_FILES).size, RUNTIME_BINDING_FILES.length);
+});
+
+test("the active workflow contract is exact, current, and shared with its deterministic generator", async () => {
+  assert.deepEqual(WORKFLOW_CONTRACT_SOURCE_PATHS, EVIDENCE_SOURCE_PATHS);
+  const current = await readCurrentWorkflowContractEvidence(REPO_ROOT);
+  assert.match(current.sha256, /^[a-f0-9]{64}$/);
+  assert.equal(current.evidence.scenarioCount, 5);
+  assert.equal(current.evidence.passedScenarioCount, 5);
+});
+
+test("the active workflow contract rejects symlinked source and evidence parents", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "gearbox-workflow-contract-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const directory of ["lib", "tests", "docs"]) {
+    await symlink(join(REPO_ROOT, directory), join(root, directory), "dir");
+  }
+  await assert.rejects(
+    readCurrentWorkflowContractEvidence(root),
+    /regular non-symlink repository file/i,
+  );
+});
+
+test("installed dispatch runtime has a complete relative-import closure", async () => {
+  const installed = new Set(DISPATCH_RUNTIME_FILES);
+  const pending = ["scripts/gearbox-dispatch.mjs", ...DISPATCH_RUNTIME_FILES];
+  const visited = new Set();
+  while (pending.length > 0) {
+    const path = pending.pop();
+    if (visited.has(path)) continue;
+    visited.add(path);
+    const source = await readFile(join(REPO_ROOT, path), "utf8");
+    for (const specifier of relativeImports(source)) {
+      const imported = relative(REPO_ROOT, resolve(dirname(join(REPO_ROOT, path)), specifier));
+      if (imported.startsWith("..")) continue;
+      assert.ok(installed.has(imported), `${path} imports missing runtime module ${imported}`);
+      pending.push(imported);
+    }
   }
 });
 
@@ -434,7 +591,7 @@ test("dispatch runtime install reads back exact targets and rollback restores a 
     dispatchMode: "shadow",
   });
   assert.equal(manifest.policyMode, "shadow");
-  assert.equal(manifest.files.length, DISPATCH_RUNTIME_FILES.length + 2);
+  assert.equal(manifest.files.length, DISPATCH_RUNTIME_FILES.length + 3);
   for (const entry of manifest.files) {
     const metadata = await stat(entry.targetPath);
     assert.equal(metadata.mode & 0o777, entry.mode);
@@ -445,6 +602,7 @@ test("dispatch runtime install reads back exact targets and rollback restores a 
   assert.equal(runtime.length, DISPATCH_RUNTIME_FILES.length);
   assert.ok(runtime.every((entry) => entry.mode === 0o644));
   assert.equal(manifest.files.find((entry) => entry.kind === "dispatch-wrapper").mode, 0o755);
+  assert.equal(manifest.files.find((entry) => entry.kind === "dispatch-root-wrapper").mode, 0o755);
   assert.equal(manifest.files.find((entry) => entry.kind === "dispatch-policy").mode, 0o600);
 
   await chmod(runtime[0].targetPath, 0o600);
@@ -465,6 +623,8 @@ test("dispatch runtime install rolls back every target after a mid-write failure
   ]));
   const before = await treeState(home);
   let writes = 0;
+  const writtenPaths = [];
+  const failureAt = DISPATCH_RUNTIME_FILES.length + 2;
   await assert.rejects(
     installDispatchRuntime({
       sourceRoot: REPO_ROOT,
@@ -473,13 +633,17 @@ test("dispatch runtime install rolls back every target after a mid-write failure
       dispatchMode: "shadow",
       writeTarget: async (...args) => {
         writes += 1;
-        if (writes === 2) throw new Error("synthetic dispatch write failure");
+        if (writes === failureAt) throw new Error("synthetic dispatch write failure");
+        writtenPaths.push(args[0]);
         return atomicWrite(...args);
       },
     }),
     /synthetic dispatch write failure/,
   );
-  assert.equal(writes, 2);
+  assert.equal(writes, failureAt);
+  for (const path of WORKFLOW_RUNTIME_FILES) {
+    assert.ok(writtenPaths.includes(join(home, "gearbox", "runtime", path)), path);
+  }
   assert.deepEqual(await treeState(home), before);
 });
 
@@ -501,6 +665,125 @@ test("active dispatch install requires a hash-bound activation policy and remain
   assert.deepEqual(installed.activation, activation);
   assert.equal(installed.allowTypedBridge, false);
   await rollbackDispatchRuntime({ manifest, force: true });
+});
+
+test("active activation record is private, persistent, and detached from repository paths", async (t) => {
+  const home = await mkdtemp(join(tmpdir(), "gearbox-active-record-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const installId = "install-test";
+  const recordPath = activeActivationRecordPath(home, installId);
+  const policy = createDispatchPolicy({
+    mode: "active",
+    allowTypedBridge: false,
+    activation: { installId, recordPath },
+  });
+  const digest = "a".repeat(64);
+  const files = [
+    ...ROLE_SPECS.map((spec) => ({
+      kind: "role",
+      role: spec.name,
+      sourcePath: join("/private/tmp/task13", "roles", spec.sourceFile),
+      targetPath: join(home, "agents", spec.installFile),
+      afterSha256: digest,
+      backup: { backupPath: join("/private/tmp/task13", "backup") },
+    })),
+    {
+      kind: "launcher",
+      sourcePath: "/private/tmp/task13/scripts/codex-typed-agent",
+      targetPath: join(home, "bin", "codex-typed-agent"),
+      mode: 0o755,
+      afterSha256: digest,
+    },
+    {
+      kind: "dispatch-policy",
+      sourcePath: null,
+      targetPath: join(home, "gearbox", "dispatch-policy.json"),
+      mode: 0o600,
+      afterSha256: digest,
+      policyMode: "active",
+    },
+    ...DISPATCH_RUNTIME_FILES.map((path) => ({
+      kind: "dispatch-runtime",
+      sourcePath: join("/private/tmp/task13", path),
+      targetPath: join(home, "gearbox", "runtime", path),
+      mode: 0o644,
+      afterSha256: digest,
+    })),
+    {
+      kind: "dispatch-wrapper",
+      sourcePath: "/private/tmp/task13/scripts/gearbox-dispatch",
+      targetPath: join(home, "bin", "gearbox-dispatch"),
+      mode: 0o755,
+      afterSha256: digest,
+    },
+  ];
+  const manifest = {
+    schemaVersion: 1,
+    generatedAt: "2026-07-15T00:00:00.000Z",
+    completedAt: "2026-07-15T00:01:00.000Z",
+    status: "applied",
+    activation: {
+      installId,
+      recordPath,
+      manifestPath: "/private/tmp/task13/reports/install-manifest.json",
+      repositoryRoot: "/private/tmp/task13",
+      policySha256: policy.sha256,
+      acceptanceBindingSha256: "b".repeat(64),
+      writingSkillsEvidenceSha256: "c".repeat(64),
+      workflowContractEvidenceSha256: "d".repeat(64),
+    },
+    config: {
+      path: join(home, "config.toml"),
+      mode: 0o600,
+      afterSha256: digest,
+      integrity: captureActiveConfigIntegrity(
+        renderConfig(
+          'model = "gpt-5.6-sol"\nmodel_reasoning_effort = "ultra"\nsandbox_mode = "workspace-write"\napproval_policy = "on-request"\n\n[agents]\nmax_threads = 3\nmax_depth = 1\n',
+          home,
+          { promoteV2: true },
+        ),
+        home,
+      ),
+    },
+    agents: { path: join(home, "AGENTS.md"), mode: 0o644, afterSha256: digest },
+    staticChecks: { strictConfig: true, configLoad: true, mcpConfig: true, installation: true },
+    postInstallRootSmoke: {
+      pass: true,
+      actual: { persisted: true, model: "gpt-5.6-sol", effort: "ultra", sessionId: "drop-me" },
+    },
+    files,
+  };
+
+  const persisted = await persistActiveActivationRecord({ codexHome: home, manifest, policy });
+  assert.equal(persisted.path, recordPath);
+  assert.match(persisted.sha256, /^[a-f0-9]{64}$/);
+  assert.equal((await stat(recordPath)).mode & 0o777, 0o600);
+  assert.equal((await stat(dirname(recordPath))).mode & 0o777, 0o700);
+  assert.equal(validateActiveActivationRecord(persisted.record, { codexHome: home, policy }).pass, true);
+  assert.equal(persisted.record.config.integrity.schemaVersion, 1);
+  const source = await readFile(recordPath, "utf8");
+  assert.doesNotMatch(source, /private\/tmp|repositoryRoot|manifestPath|sourcePath|backup|sessionId/);
+  assert.equal((await verifyActiveActivationRecordForRemoval({
+    codexHome: home,
+    activation: { ...manifest.activation, recordPath },
+    expectedSha256: persisted.sha256,
+  })).exists, true);
+  await writeFile(recordPath, `${source.trimEnd()} \n`, { mode: 0o600 });
+  await assert.rejects(
+    removeActiveActivationRecord({
+      codexHome: home,
+      activation: { ...manifest.activation, recordPath },
+      expectedSha256: persisted.sha256,
+    }),
+    /changed after installation/,
+  );
+  await writeFile(recordPath, source, { mode: 0o600 });
+  assert.equal((await removeActiveActivationRecord({
+    codexHome: home,
+    activation: { ...manifest.activation, recordPath },
+    expectedSha256: persisted.sha256,
+  })).action, "removed");
+  await assert.rejects(lstat(recordPath), /ENOENT/);
 });
 
 test("redactSensitive removes sensitive payloads but retains usage counts", () => {
@@ -554,6 +837,30 @@ test("rollout summary keeps session correlation in memory but writeJson removes 
   const persisted = await readFile(report, "utf8");
   assert.doesNotMatch(persisted, /session-secret|raw prompt|raw rollout content/);
   assert.match(persisted, /total_tokens/);
+});
+
+test("rollout summary correlates a privacy-safe tool timeline", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "gearbox-rollout-timeline-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const rollout = join(directory, "rollout.jsonl");
+  await writeFile(rollout, [
+    JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "private-luna", name: "spawn_agent", arguments: '{"agent_type":"luna_clerk","message":"private"}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "private-luna", output: '{"task":"private"}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "private-list", name: "agents.list_agents", arguments: '{}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "private-list", output: '{"agents":[{"agent_name":"private","agent_status":"running"}]}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "private-completed", name: "list_agents", arguments: '{}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "private-completed", output: '{"agents":[{"agent_status":{"completed":"private result"}}]}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call", call_id: "private-missing", name: "list_agents", arguments: '{}' } }),
+    JSON.stringify({ type: "response_item", payload: { type: "function_call_output", call_id: "uncorrelated", output: '{"agents":[{"agent_status":"running"}]}' } }),
+  ].join("\n"), "utf8");
+  const summary = await summarizeRollout(rollout);
+  assert.deepEqual(summary.toolTimeline, [
+    { name: "spawn_agent", callIndex: 0, outputPresent: true, outputSha256: sha256('{"task":"private"}'), runningOrCompleted: false },
+    { name: "agents.list_agents", callIndex: 1, outputPresent: true, outputSha256: sha256('{"agents":[{"agent_name":"private","agent_status":"running"}]}'), runningOrCompleted: true },
+    { name: "list_agents", callIndex: 2, outputPresent: true, outputSha256: sha256('{"agents":[{"agent_status":{"completed":"private result"}}]}'), runningOrCompleted: true },
+    { name: "list_agents", callIndex: 3, outputPresent: false, outputSha256: null, runningOrCompleted: false },
+  ]);
+  assert.doesNotMatch(JSON.stringify(summary.toolTimeline), /private-luna|private-list|luna_clerk|private/);
 });
 
 test("cleanupProbeArtifacts removes only owned temporary directories", async (t) => {

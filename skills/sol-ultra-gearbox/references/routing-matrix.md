@@ -40,6 +40,20 @@ run `gearbox-dispatch plan`. The planner selects exactly one shape:
 | `isolated_role_root` | Read-only Luna/Terra work passes all gates and the isolated runner is verified, but native `agent_type` is unavailable or parent permission cannot be inherited safely; the owner-approved `sol_skill_tester` writing-skills contract also uses this shape. It is always an isolated root, never a child. |
 | `typed_child_bridge` | Disabled in the first active release (`allowTypedBridge=false`); never infer availability. |
 
+An active policy-v2 installation may also expose `app_server_root` through the
+foreground `gearbox-root` launcher. This route runs before a new App Server
+turn, so the classifier—not the owner—selects Sol Low/Medium/Max/Ultra from the
+managed packet. It is accepted only when persisted model/effort, declared
+write scope, readback, archive/unsubscribe, clean host exit, and the
+activation-bound paid acceptance all verify. It is not a workflow-stage shape
+and does not intercept stock Desktop task creation.
+The workflow-adapter policy gate precedes host discovery. Capability is derived
+from the exact initialize response and a compatible runtime-bound App Server
+version; no static all-true host claim is accepted.
+`gearbox-root handshake` does not count as execution. Only the post-activation,
+owner-authorized paid smoke receipt with the fixed result marker counts as
+fresh `app_server_root` runtime evidence.
+
 `off` makes no automatic decision, `shadow` records a root-inline outcome, and
 `active` may execute only the validated decision. Unknown workflow skills and
 unsupported direct core calls are not bridged by this matrix; keep them on Sol.
@@ -47,6 +61,19 @@ unsupported direct core calls are not bridged by this matrix; keep them on Sol.
 Max and Ultra solve different problems. Max spends more reasoning on one task.
 Ultra is for meaningful parallel decomposition and usually consumes more total
 tokens because every child performs its own model and tool work.
+
+The machine-readable classifier uses these exact topology classes:
+
+| Task class | Sol root route | Required evidence |
+|---|---|---|
+| `simple` | Sol Low | At most two expected root tool calls or one local location |
+| `normal` | Sol Medium | No difficult or independently parallel shape proven |
+| `indivisible_difficult` | Sol Max | Ambiguity, hidden coupling, high risk, or weak verification |
+| `independent_workstreams` | Sol Ultra | At least two explicitly declared independent workstreams, disjoint scopes, and directly consumable results |
+
+`requestedChildren >= 2` by itself remains `normal`. The packet must carry the
+separate `independentWorkstreams >= 2` fact; Gearbox, not the owner, is
+responsible for producing that classification.
 
 ## Match typed roles to work
 

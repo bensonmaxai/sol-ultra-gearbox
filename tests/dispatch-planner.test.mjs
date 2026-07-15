@@ -2,11 +2,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ROLE_SPECS } from "../lib/gearbox.mjs";
 import {
+  APP_SERVER_ROOT_PROVIDER_CAPABILITIES,
+  APP_THREAD_EXECUTION_ENABLED,
+  APP_THREAD_PROVIDER_CAPABILITIES,
+  classifyTaskTopology,
+  evaluateAppServerRootProvider,
+  evaluateAppThreadProvider,
+  evaluateWorkflowPolicy,
   hashTaskPacket,
   planDispatch,
+  planRootLaunch,
   renderTaskMessage,
+  selectModelRoute,
   validateTaskPacket,
 } from "../lib/dispatch-planner.mjs";
+import { compileStagePacket } from "../lib/workflow-compiler.mjs";
+import { hashWorkflowPlan } from "../lib/workflow-plan.mjs";
+import { workflowPlan } from "./helpers/workflow-fixtures.mjs";
 
 function packet(overrides = {}) {
   return {
@@ -89,6 +101,15 @@ test("valid packet selects an isolated Terra root for read-only permission misma
   );
   assert.equal(decision.spawnArgs, null);
   assert.equal(decision.requiresRuntimeEvidence, true);
+  assert.deepEqual(decision.provider, {
+    requested: "isolated_role_root",
+    selected: "isolated_role_root",
+    requestedExecutable: true,
+    executable: true,
+    fallbackApplied: false,
+    delegatedExecution: true,
+    reasonCode: "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH",
+  });
 });
 
 test("executing-plans is a known adapter for bounded delegated phases", () => {
@@ -278,6 +299,15 @@ test("planner produces a typed child with only permitted spawn arguments", () =>
   ]);
   assert.equal(decision.spawnArgs.agent_type, "terra_explorer");
   assert.equal(decision.spawnArgs.fork_turns, "none");
+  assert.deepEqual(decision.provider, {
+    requested: "typed_child",
+    selected: "typed_child",
+    requestedExecutable: true,
+    executable: true,
+    fallbackApplied: false,
+    delegatedExecution: true,
+    reasonCode: "DELEGATE_TYPED_PERMISSION_MATCH",
+  });
 });
 
 test("shadow records the recommendation but executes root-inline", () => {
@@ -378,6 +408,10 @@ test("packet validation rejects every missing, unknown, and malformed top-level 
   assert.throws(() => plan({ schemaVersion: 1 }), /invalid task packet/);
 });
 
+test("packet validation rejects schema version 3", () => {
+  assert.equal(validateTaskPacket(packet({ schemaVersion: 3 })).pass, false);
+});
+
 test("packet hashes deterministically and messages contain all self-contained sections", () => {
   const reordered = Object.fromEntries(Object.entries(packet()).reverse());
   assert.match(hashTaskPacket(packet()), /^[a-f0-9]{64}$/);
@@ -411,5 +445,226 @@ test("batch and permission safety gates remain root-inline", () => {
     const decision = plan(value, { capabilities: capabilities ?? CAPABILITIES });
     assert.equal(decision.effectiveShape, "root_inline");
     assert.equal(decision.reasonCode, reasonCode);
+  }
+});
+
+test("planner accepts a valid packet v2 without changing its routing decision", () => {
+  const workflow = workflowPlan({ workflowAdapter: "direct" });
+  workflow.stages[2] = {
+    ...workflow.stages[2],
+    responsibility: "exploration",
+    requestedRole: null,
+  };
+  const packetV2 = compileStagePacket({
+    plan: workflow,
+    planHash: hashWorkflowPlan(workflow),
+    stageId: "verify-evidence",
+    approvalFacts: [],
+    batch: { requestedChildren: 1, writerCount: 0, scopesDisjoint: true },
+  });
+  const decision = plan(packetV2);
+  assert.equal(decision.role, "terra_explorer");
+  assert.equal(decision.selectedShape, "isolated_role_root");
+  assert.equal(decision.reasonCode, "DELEGATE_ISOLATED_READ_PERMISSION_MISMATCH");
+});
+
+test("task classifier selects simple Sol Low, indivisible Sol Max, and independent Sol Ultra", () => {
+  const simple = plan(packet({
+    costSignals: {
+      ...packet().costSignals,
+      estimatedRootToolCalls: 2,
+    },
+  }));
+  assert.equal(simple.selectedShape, "root_inline");
+  assert.equal(simple.routing.topology.taskClass, "simple");
+  assert.deepEqual(simple.routing.root, {
+    model: "gpt-5.6-sol",
+    effort: "low",
+    reasonCode: "ROOT_ROUTE_SOL_LOW_SIMPLE",
+  });
+
+  const difficultValue = packet({
+    riskSignals: {
+      ...packet().riskSignals,
+      hiddenCoupling: true,
+    },
+  });
+  assert.equal(classifyTaskTopology(difficultValue).taskClass, "indivisible_difficult");
+  const difficult = plan(difficultValue);
+  assert.equal(difficult.selectedShape, "root_inline");
+  assert.equal(difficult.routing.root.effort, "max");
+  assert.equal(difficult.routing.root.reasonCode, "ROOT_ROUTE_SOL_MAX_SINGLE_DIFFICULT");
+
+  const independent = plan(packet({
+    batch: {
+      requestedChildren: 2,
+      writerCount: 0,
+      scopesDisjoint: true,
+      independentWorkstreams: 2,
+    },
+  }));
+  assert.equal(independent.routing.topology.taskClass, "independent_workstreams");
+  assert.equal(independent.routing.topology.independentWorkstreams, 2);
+  assert.equal(independent.routing.root.effort, "ultra");
+  assert.equal(
+    independent.routing.root.reasonCode,
+    "ROOT_ROUTE_SOL_ULTRA_INDEPENDENT_WORKSTREAMS",
+  );
+
+  const undeclaredParallelism = plan(packet({
+    batch: {
+      requestedChildren: 2,
+      writerCount: 0,
+      scopesDisjoint: true,
+    },
+  }));
+  assert.equal(undeclaredParallelism.routing.topology.taskClass, "normal");
+  assert.equal(undeclaredParallelism.routing.root.effort, "medium");
+});
+
+test("model routing maps responsibilities to Luna, Terra, and Sol independently of workflow policy", () => {
+  const routes = [
+    ["mechanical", "luna_clerk", "gpt-5.6-luna", "low"],
+    ["exploration", "terra_explorer", "gpt-5.6-terra", "medium"],
+    ["implementation", "terra_worker", "gpt-5.6-terra", "high"],
+    ["review", "sol_reviewer", "gpt-5.6-sol", "high"],
+  ];
+  for (const [responsibility, role, model, effort] of routes) {
+    const value = packet({ responsibility, workflowAdapter: "unknown:fixture" });
+    const routing = selectModelRoute({ packet: value, roleSpecs: ROLE_SPECS });
+    assert.deepEqual(routing.delegated, {
+      role,
+      model,
+      effort,
+      permission: ROLE_SPECS.find((spec) => spec.name === role).sandbox,
+    });
+    assert.equal(evaluateWorkflowPolicy(value).reasonCode, "ROOT_UNKNOWN_SKILL");
+  }
+});
+
+test("App Server thread provider contract fails closed to root-inline without executable evidence", () => {
+  assert.equal(APP_THREAD_EXECUTION_ENABLED, false);
+  assert.deepEqual(APP_THREAD_PROVIDER_CAPABILITIES, [
+    "ownerAuthorized",
+    "projectToolAvailable",
+    "createToolAvailable",
+    "readToolAvailable",
+    "followupToolAvailable",
+    "archiveToolAvailable",
+    "hostLifecycleAvailable",
+    "turnStartModelSelection",
+    "actualRuntimeEvidence",
+    "writeScopeVerifiable",
+    "closeLifecycleVerifiable",
+    "paidAcceptanceCurrent",
+  ]);
+  const appThread = Object.fromEntries(
+    APP_THREAD_PROVIDER_CAPABILITIES.map((key) => [key, true]),
+  );
+  appThread.hostLifecycleAvailable = false;
+  appThread.actualRuntimeEvidence = false;
+  appThread.paidAcceptanceCurrent = false;
+  const assessment = evaluateAppThreadProvider(appThread, { policyEnabled: false });
+  assert.equal(assessment.pass, false);
+  assert.equal(assessment.executable, false);
+  assert.equal(assessment.reasonCode, "APP_THREAD_HOST_UNAVAILABLE");
+
+  const contractOnly = evaluateAppThreadProvider(
+    Object.fromEntries(APP_THREAD_PROVIDER_CAPABILITIES.map((key) => [key, true])),
+    { policyEnabled: APP_THREAD_EXECUTION_ENABLED },
+  );
+  assert.equal(contractOnly.pass, false);
+  assert.equal(contractOnly.executable, false);
+  assert.equal(contractOnly.reasonCode, "APP_THREAD_POLICY_DISABLED");
+
+  const decision = plan(packet(), {
+    capabilities: {
+      ...CAPABILITIES,
+      agentTypeVisible: false,
+      isolatedRunnerVerified: false,
+      appThread,
+    },
+  });
+  assert.equal(decision.selectedShape, "root_inline");
+  assert.equal(decision.reasonCode, "ROOT_APP_THREAD_PROVIDER_UNAVAILABLE");
+  assert.deepEqual(decision.provider, {
+    requested: "app_thread_root",
+    selected: "root_inline",
+    requestedExecutable: false,
+    executable: true,
+    fallbackApplied: true,
+    delegatedExecution: false,
+    reasonCode: "APP_THREAD_HOST_UNAVAILABLE",
+  });
+});
+
+test("policy-bound App Server root provider selects the classified effort before launch", () => {
+  const policy = {
+    schemaVersion: 2,
+    mode: "active",
+    rootProvider: {
+      kind: "app_server_root",
+      enabled: true,
+      transport: "stdio",
+      protocolVersion: 1,
+      acceptanceBindingSha256: "a".repeat(64),
+    },
+  };
+  const capabilities = Object.fromEntries(
+    APP_SERVER_ROOT_PROVIDER_CAPABILITIES.map((key) => [key, true]),
+  );
+  const ready = evaluateAppServerRootProvider(capabilities, { policy });
+  assert.equal(ready.pass, true);
+  assert.equal(ready.reasonCode, "APP_SERVER_ROOT_PROVIDER_READY");
+
+  for (const [value, effort, shape] of [
+    [packet({ costSignals: { ...packet().costSignals, estimatedRootToolCalls: 1, oneLocation: true } }), "low", "app_server_root"],
+    [packet({ riskSignals: { ...packet().riskSignals, hiddenCoupling: true } }), "max", "app_server_root"],
+    [packet({
+      batch: { requestedChildren: 2, writerCount: 0, scopesDisjoint: true, independentWorkstreams: 2 },
+    }), "ultra", "app_server_root"],
+  ]) {
+    const decision = planRootLaunch({ policy, packet: value, capabilities, roleSpecs: ROLE_SPECS });
+    assert.equal(decision.routing.root.effort, effort);
+    assert.equal(decision.selectedShape, shape);
+    assert.equal(decision.provider.fallbackApplied, false);
+  }
+
+  const unavailableCapabilities = { ...capabilities, closeLifecycleVerifiable: false };
+  const unavailable = planRootLaunch({
+    policy,
+    packet: packet(),
+    capabilities: unavailableCapabilities,
+    roleSpecs: ROLE_SPECS,
+  });
+  assert.equal(unavailable.selectedShape, "root_inline");
+  assert.equal(unavailable.provider.fallbackApplied, true);
+  assert.equal(unavailable.provider.reasonCode, "APP_SERVER_ROOT_LIFECYCLE_UNVERIFIED");
+});
+
+test("App Server root keeps workflow skill policy as an independent pre-host gate", () => {
+  const policy = {
+    schemaVersion: 2,
+    mode: "active",
+    rootProvider: {
+      kind: "app_server_root",
+      enabled: true,
+      transport: "stdio",
+      protocolVersion: 1,
+      acceptanceBindingSha256: "a".repeat(64),
+    },
+  };
+  const capabilities = Object.fromEntries(
+    APP_SERVER_ROOT_PROVIDER_CAPABILITIES.map((key) => [key, true]),
+  );
+  for (const [value, reasonCode] of [
+    [packet({ workflowAdapter: "unknown:fixture" }), "ROOT_UNKNOWN_SKILL"],
+    [packet({ workflowAdapter: "superpowers:writing-skills", ownerOptIn: false }), "ROOT_OWNER_APPROVAL_REQUIRED"],
+  ]) {
+    const decision = planRootLaunch({ policy, packet: value, capabilities, roleSpecs: ROLE_SPECS });
+    assert.equal(decision.selectedShape, "root_inline");
+    assert.equal(decision.reasonCode, reasonCode);
+    assert.deepEqual(decision.workflowPolicy, { pass: false, reasonCode });
+    assert.equal(decision.provider.reasonCode, "APP_SERVER_ROOT_WORKFLOW_POLICY_REJECTED");
   }
 });

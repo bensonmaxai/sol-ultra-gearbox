@@ -1,0 +1,126 @@
+{
+  "schemaVersion": 1,
+  "kind": "verified_workflow_contract",
+  "sourceManifest": [
+    {
+      "path": "lib/workflow-plan.mjs",
+      "sha256": "1e4c6ec8e083d1faf2adc874197b35ca14df7c757d95e3516a28806e05c9ef61"
+    },
+    {
+      "path": "lib/workflow-compiler.mjs",
+      "sha256": "41c422cc3cf0945e88fcd2ed22f86bb9fc3667f88b6a02f6f9cfd3d18d35b67f"
+    },
+    {
+      "path": "lib/workflow-state.mjs",
+      "sha256": "470194a32324b7e107c45a038d31655eeda8bde83b923eae57590d65ffc5fa47"
+    },
+    {
+      "path": "lib/workflow-scheduler.mjs",
+      "sha256": "26d22e22be4acb08f1391973fe93d632d6f116aa3ad9b7fc2265ba73160edb62"
+    },
+    {
+      "path": "lib/workflow-orchestrator.mjs",
+      "sha256": "daea7b6cf42202dc0f08d00ee2eaa4604e124f85b685545e476123ae456c66fe"
+    },
+    {
+      "path": "lib/workflow-ledger.mjs",
+      "sha256": "fd6b6841d8bb10a2c40234bd867e214fc6ce923250e81843daf5bda8f2135c48"
+    },
+    {
+      "path": "lib/workflow-recovery.mjs",
+      "sha256": "9675dfd5dbade815f54f2c86348a0484ac7765be74b050e10fa0168b33a8c7da"
+    },
+    {
+      "path": "lib/workflow-outcome.mjs",
+      "sha256": "803661490929f4cf59507b3b5609595337ce178f84b18203af95afcf3e297c3d"
+    },
+    {
+      "path": "tests/workflow-acceptance.test.mjs",
+      "sha256": "d7c1cdabd636df6b87f8df409023743ef7de3be3748d4eeac6f421444ca24063"
+    }
+  ],
+  "scenarioCount": 5,
+  "passedScenarioCount": 5,
+  "scenarios": [
+    {
+      "id": "parallel_research_then_verify",
+      "pass": true,
+      "contract": {
+        "stageOrderPreserved": true,
+        "selfContainedHandoff": true,
+        "firstRealExecutionCanary": true,
+        "futureCapacityReserved": true,
+        "resultAdoptionExplicit": true,
+        "typedIdentityRequired": true,
+        "permissionsRequired": true,
+        "runtimeEvidenceRequired": true,
+        "resumableWithoutDuplicateWork": true,
+        "privacySafeOutcome": true
+      }
+    },
+    {
+      "id": "two_audits_then_writer",
+      "pass": true,
+      "contract": {
+        "stageOrderPreserved": true,
+        "selfContainedHandoff": true,
+        "firstRealExecutionCanary": true,
+        "futureCapacityReserved": true,
+        "resultAdoptionExplicit": true,
+        "typedIdentityRequired": true,
+        "permissionsRequired": true,
+        "runtimeEvidenceRequired": true,
+        "resumableWithoutDuplicateWork": true,
+        "privacySafeOutcome": true
+      }
+    },
+    {
+      "id": "resume_after_adopted_stage",
+      "pass": true,
+      "contract": {
+        "stageOrderPreserved": true,
+        "selfContainedHandoff": true,
+        "firstRealExecutionCanary": true,
+        "futureCapacityReserved": true,
+        "resultAdoptionExplicit": true,
+        "typedIdentityRequired": true,
+        "permissionsRequired": true,
+        "runtimeEvidenceRequired": true,
+        "resumableWithoutDuplicateWork": true,
+        "privacySafeOutcome": true
+      }
+    },
+    {
+      "id": "first_execution_fails_to_materialize",
+      "pass": true,
+      "contract": {
+        "stageOrderPreserved": true,
+        "selfContainedHandoff": true,
+        "firstRealExecutionCanary": true,
+        "futureCapacityReserved": true,
+        "resultAdoptionExplicit": true,
+        "typedIdentityRequired": true,
+        "permissionsRequired": true,
+        "runtimeEvidenceRequired": true,
+        "resumableWithoutDuplicateWork": true,
+        "privacySafeOutcome": true
+      }
+    },
+    {
+      "id": "invalid_or_out_of_scope_artifact",
+      "pass": true,
+      "contract": {
+        "stageOrderPreserved": true,
+        "selfContainedHandoff": true,
+        "firstRealExecutionCanary": true,
+        "futureCapacityReserved": true,
+        "resultAdoptionExplicit": true,
+        "typedIdentityRequired": true,
+        "permissionsRequired": true,
+        "runtimeEvidenceRequired": true,
+        "resumableWithoutDuplicateWork": true,
+        "privacySafeOutcome": true
+      }
+    }
+  ]
+}

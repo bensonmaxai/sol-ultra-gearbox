@@ -23,6 +23,14 @@ usage。任何 metadata 缺失、越界寫入或 schema mismatch 都會 fail clo
 Sol Max is selected on the root task. It is not a custom child role and the
 Gearbox does not spawn a Sol child to simulate it.
 
+The deterministic routing contract separates three decisions: task topology
+selects the Sol root effort, responsibility selects a Luna/Terra/Sol role, and
+verified capabilities select the execution provider. A simple local task maps
+to Sol Low, normal mixed work to Sol Medium, one difficult indivisible task to
+Sol Max, and only an explicit declaration of at least two independent,
+disjoint, directly consumable workstreams to Sol Ultra. Merely requesting two
+children is not enough.
+
 See the [complete work and model routing matrix](skills/sol-ultra-gearbox/references/routing-matrix.md)
 for Low through Ultra effort boundaries, escalation, and the distinction
 between Sol Ultra root orchestration and the Terra Ultra child profile.
@@ -140,10 +148,13 @@ Unknown skills, generic roles, no verified native-or-isolated execution
 surface, and missing or mismatched runtime evidence remain root-inline. A cheap role gets one initial
 attempt and at most one correction for a concrete local output defect; identity,
 permission, scope, cleanup, policy, ambiguity, or hidden-coupling failures do
-not retry. Trusted current ten-question acceptance evidence and an applied
-activation manifest are required before first active mode. A hard active-mode
-failure stops delegation; the manifest path is redacted from public output, and
-only the managed rollback command can consume it to alter global state.
+not retry. Trusted current ten-question acceptance evidence, a persistent
+managed activation record, and a local rollback manifest are required before
+first active mode. Active status reads
+`$CODEX_HOME/gearbox/activations/<installId>.json`, so repository report cleanup
+does not disable routing. A hard active-mode failure stops delegation;
+activation-record and manifest paths are redacted from public output, and only
+the managed rollback command can consume the manifest to alter global state.
 
 Q10 verifies exact typed fields, two distinct non-empty task messages, declared
 disjoint scope mapping, persisted child identity, lineage, markers, tokens, no
@@ -157,6 +168,47 @@ hash-bound manifest after a hard active failure, then let Sol integrate, test,
 record a privacy-safe outcome, and clean the packet. See the
 [quality-first dispatch reference](skills/sol-ultra-gearbox/references/quality-first-dispatch.md)
 for the complete contract.
+
+## Verified workflow orchestration
+
+Dependency-bearing work may use a validated DAG and schema-version-2 stage
+packets. Gearbox preserves verification and recovery reserves, materializes the
+first real execution as a canary, and releases no deferred stage until a
+persisted running/completed receipt exists. Accepted work follows the order
+evidence -> mechanical verification -> explicit Sol adoption -> provider close.
+
+A compatible upstream workflow store remains the source of truth; the private
+managed ledger is used only when no compatible upstream source exists. Resume
+keeps adopted work closed and blocks incomplete executions instead of silently
+rerunning them. Supported shapes remain `root_inline`, `typed_child`, and
+`isolated_role_root`. `app_thread_root` is not enabled, and this repository does
+not provide a Codex core hook.
+
+The deterministic five-scenario artifact and Q10 canary establish the public
+contract without claiming speed, savings, or better output quality. See the
+[verified workflow operator contract](skills/sol-ultra-gearbox/references/verified-workflows.md).
+
+`root_inline`, native `typed_child`, and verified `isolated_role_root` remain
+the in-turn workflow providers. Policy schema v2 additionally enables an
+explicit foreground `app_server_root` path through the installed
+`gearbox-root` launcher. The launcher reads one managed packet, classifies Sol
+Low/Medium/Max/Ultra before the first turn, sends that model and effort in
+`turn/start`, verifies the persisted rollout, checks every workspace change
+against the declared write scope, reads the completed turn back, then
+archives, unsubscribes, and closes App Server. Its privacy-safe receipt binds
+the task, policy, route, runtime, scope, token, and lifecycle evidence.
+Host capability is derived from the exact `initialize` response and the
+runtime-bound compatible App Server version (`0.144.2`), not self-declared by
+the launcher. An unknown version is closed before `thread/start` and falls back
+to `root_inline`. The separate workflow-adapter policy gate runs before host
+discovery, so an unknown skill or missing writing-skills owner opt-in never
+starts App Server.
+
+This does not intercept a stock Desktop task and cannot retroactively change a
+turn that already started. The separate workflow-stage `app_thread_root`
+surface remains disabled. Missing policy, acceptance binding, host capability,
+runtime identity, scope, or close evidence returns a reason-coded
+`root_inline` fallback and does not count as automatic routing success.
 
 ## Requirements
 
@@ -177,20 +229,60 @@ npm run release:check
 npm run doctor -- --json
 node scripts/gearbox.mjs apply --promote-v2 --dispatch-mode active --dry-run
 npm run acceptance
-node scripts/gearbox.mjs apply --promote-v2 --dispatch-mode active
+node scripts/gearbox.mjs apply --promote-v2 --dispatch-mode active \
+  --reuse-smoke reports/<smoke-run>/smoke.json \
+  --reuse-acceptance reports/<acceptance-run>/acceptance.json
 npm run dispatch:status
+gearbox-root handshake
+gearbox-root smoke --cwd "$PWD"
 ```
 
-An active status reports integrity `pass`, `allowTypedBridge=false`, the policy
-digest, and current managed configuration, role, launcher, and runtime hashes
-without exposing the manifest path.
+An active status reports scoped integrity `pass`, `allowTypedBridge=false`, the
+policy digest, a privacy-safe component breakdown, and current managed
+configuration, role, launcher, and runtime hashes without exposing the
+activation-record or rollback-manifest path. Unrelated whole-file
+`config.toml` drift is an observation, not a failure; exact managed-block,
+safety-semantic, policy, role, runtime, or permission drift remains hard-off
+with a concrete reason code. New activation records bind every scoped semantic
+value; legacy manifests additionally bind root model and effort to their
+persisted activation smoke while enforcing the safe contract for semantic
+values that older evidence did not retain.
+
+Stock task model and effort are selected before workflow skills run, so this
+repo cannot retroactively change an already-started Desktop task. After policy
+v2 is actively installed, the lower-layer launcher applies the route before
+the first turn:
+
+```bash
+gearbox-root plan --packet <owned-packet.json> --cwd "$PWD"
+gearbox-root launch --packet <owned-packet.json> --consume --cwd "$PWD"
+```
+
+The managed runner produces the packet and its topology facts; the owner does
+not select a model or effort flag. The launcher is deploy-ready only for this
+explicit foreground path. It is not a global default for stock Desktop task
+creation and is not a Codex core hook.
+
+`gearbox-root handshake` is a no-turn transport probe. The owner-authorized,
+paid `gearbox-root smoke` creates one read-only Sol Low turn, requires the exact
+`GEARBOX_APP_SERVER_ROOT_OK` marker, and persists a private receipt containing
+only hashes and numeric runtime evidence. Public release evidence accepts only
+that fixed marker hash from a receipt created after the active installation,
+then locates and reparses the uniquely matching persisted rollout to reverify
+the fixed task message, Sol Low route, session identity, cwd, token usage, and
+result marker.
+These are the launcher's only additional global writes: Codex's normal session
+rollout and the private receipt. The foreground path never edits global config,
+installed roles/runtime, or auth state and never starts a background provider.
 
 The dry run does not run model-backed probes or modify global configuration.
-`npm run acceptance` and the final active apply are paid, owner-authorized
-operations. The final apply runs fresh paid smoke and acceptance evidence unless
-both trusted reuse paths (`--reuse-smoke` and `--reuse-acceptance`) validate
-against the current clean binding. All global changes are manifest-bound and
-reversible through the managed rollback command.
+`npm run acceptance`, the final active apply, and `gearbox-root smoke` are paid,
+owner-authorized operations. Acceptance already runs the role and writing-skills
+smoke and writes both report sets. The final apply runs fresh paid smoke and
+acceptance evidence unless both trusted reuse paths (`--reuse-smoke` and
+`--reuse-acceptance`) validate against the current clean binding. All global
+changes are manifest-bound and reversible through the managed rollback
+command.
 
 ## Install the global skill
 
@@ -282,9 +374,11 @@ node scripts/gearbox.mjs apply --promote-v2 \
 Reuse fails closed unless the report is under this repo's `reports/`, is a
 regular non-symlink file, is at most 30 minutes old, and exactly matches the
 current clean commit, config, Codex version, role files, and runtime sources.
-Apply writes marker-delimited changes, performs post-install checks, and
-automatically rolls back on failure. For a manual rollback, use the local
-manifest printed by the apply command:
+Apply writes marker-delimited changes, performs post-install checks, persists a
+private `0600` activation record beneath `$CODEX_HOME/gearbox/activations/`, and
+automatically rolls back on failure. The ignored repository manifest remains
+the hash-bound rollback and release-evidence input. For a manual rollback, use
+the local manifest printed by the apply command:
 
 ```bash
 node scripts/gearbox.mjs rollback --manifest reports/<run>/install-manifest.json
@@ -315,6 +409,20 @@ npm run release:evidence -- \
   --sdd reports/<run>/sdd.json \
   --acceptance reports/<run>/acceptance.json \
   --activation-manifest reports/<run>/install-manifest.json \
+  --root-provider-receipt "$CODEX_HOME/gearbox/root-receipts/<receipt>.json" \
+  --workflow-contract docs/workflow-contract-evidence.json \
+  --usage reports/<run>/real-work-usage.json
+```
+
+When the ignored reports directory contains one unambiguous newest current
+set, omit the four runtime paths and let the verifier select it without
+printing private paths:
+
+```bash
+npm run release:evidence -- \
+  --latest-current \
+  --root-provider-receipt "$CODEX_HOME/gearbox/root-receipts/<receipt>.json" \
+  --workflow-contract docs/workflow-contract-evidence.json \
   --usage reports/<run>/real-work-usage.json
 ```
 

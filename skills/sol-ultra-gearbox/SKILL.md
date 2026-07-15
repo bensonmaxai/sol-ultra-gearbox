@@ -33,6 +33,10 @@ Read [references/quality-first-dispatch.md](references/quality-first-dispatch.md
 before planning or executing supported delegated work in `shadow` or `active`
 mode.
 
+Read [references/verified-workflows.md](references/verified-workflows.md) before
+any supported multi-stage dispatch with dependencies, artifact handoffs,
+approval facts, or resumable progress.
+
 ## Run the least costly gate
 
 For an audit or planned change, run:
@@ -97,6 +101,13 @@ Gearbox enforces this flow through managed instructions and its runner; it is
 not a Codex core hook. Unsupported direct `spawn_agent` calls outside this
 skill or `gearbox-dispatch` are not intercepted by this repository.
 
+Keep routing layers separate. Task topology chooses the Sol root effort,
+responsibility chooses the Luna/Terra/Sol role, execution capability chooses
+the provider, and workflow-skill policy remains an independent gate. One
+difficult indivisible task selects Sol Max. Sol Ultra requires an explicit
+packet declaration of at least two independent, disjoint, directly consumable
+workstreams; child count alone never selects Ultra.
+
 The dispatch policy is fail closed: missing, invalid, unmanaged, or
 hash-mismatched policy is `off`. `off` makes no routing decision; `shadow`
 calculates and records a decision but completes work in the Sol root; `active`
@@ -114,7 +125,7 @@ For supported actual delegation, use this exact root workflow:
 5. `typed_child`: Sol calls `spawn_agent` with exact typed args, waits, closes the child, and validates runtime evidence.
 6. `isolated_role_root`: run `gearbox-dispatch run-isolated`; this is an isolated root, never a child.
 7. Reject missing or mismatched evidence before integration.
-8. On a hard active-mode failure, stop delegation and use the hash-bound policy activation manifest with the managed rollback command.
+8. On a hard active-mode failure, stop delegation and use the hash-bound local rollback manifest with the managed rollback command.
 9. Sol integrates, runs final relevant tests, records the privacy-safe outcome, and cleans the packet.
 
 The execution shapes are `root_inline`, `typed_child`, `isolated_role_root`,
@@ -133,17 +144,60 @@ roles, or missing trusted runtime evidence fail closed to `root_inline`. Give a 
 initial attempt and at most one correction for a concrete local output defect;
 never retry identity, permission, scope, cleanup, policy, ambiguity, or hidden
 coupling failures. Active mode requires trusted current ten-question acceptance
-evidence and an applied manifest. Active dispatch status verifies managed
-configuration, AGENTS, role, launcher, runtime, and wrapper hashes and modes,
-reports the policy digest and `allowTypedBridge=false`, and redacts the local
-manifest path. Only the managed rollback command may consume it to change global
-state. Do not claim a savings percentage before ten comparable root-inclusive
-real-work pairs exist.
+evidence, a persistent managed activation record, and an applied local rollback
+manifest. Active dispatch status reads the private record beneath
+`$CODEX_HOME/gearbox/activations/` and uses scoped config
+integrity: exact Gearbox-owned blocks and activation-bound safety semantics are
+strict, while unrelated whole-file drift is reported without forcing `off`.
+Legacy manifests bind root model and effort to persisted activation evidence
+and apply the strict safe contract to settings absent from the older snapshot.
+It also verifies AGENTS, role, launcher, runtime, and wrapper hashes and modes,
+reports privacy-safe reason codes and component checks, and redacts both record
+and manifest paths. Only the managed rollback command may consume the manifest to change
+global state. Do not claim a savings percentage before ten comparable
+root-inclusive real-work pairs exist.
+
+Policy v2 may enable the owner-authorized foreground `app_server_root` launcher.
+`gearbox-root` classifies the managed packet before the first turn, sends the
+selected Sol model and effort in `turn/start`, validates persisted rollout
+identity and declared write scope, reads back the completed turn, then
+archives, unsubscribes, and requires a clean host exit. Every host file and the
+paid-acceptance runtime binding are activation-bound. Missing evidence returns
+`root_inline` without starting a turn. This explicit launcher is not stock
+Desktop interception; workflow-stage `app_thread_root` remains disabled.
+Derive host capability from the exact initialize response and compatible
+runtime-bound App Server version; never use a launcher-owned all-true
+capability map. Run the independent workflow-adapter gate before host
+discovery. Unknown adapters and missing writing-skills owner opt-in return
+`root_inline` without starting App Server.
+Treat `gearbox-root handshake` as transport-only. Runtime verification requires
+one explicitly authorized paid `gearbox-root smoke` after active install; accept
+release evidence only when its private receipt binds the exact smoke marker,
+persisted model/effort, unchanged declared scope, and closed lifecycle, and the
+generator uniquely locates and reparses the matching rollout.
+The owner-invoked foreground launcher may persist only Codex's normal session
+rollout and one private root receipt; it must not modify global config,
+installed roles/runtime, auth, or start a background provider.
 
 Treat Q10 scopes as declared routing evidence, not observed file-read telemetry.
 Require distinct non-empty task messages plus persisted child role, model,
 effort, sandbox, lineage, marker, token, descendant, writer, and filesystem
 evidence; do not require byte-identical persisted prompt text.
+
+## Orchestrate verified workflows
+
+Use a validated DAG and schema version 2 stage packets only for dependency-
+bearing work; direct bounded tasks remain packet v1. Preserve reserved verification
+and recovery attempts. The first real execution is the canary,
+and no deferred stage launches before its persisted receipt.
+
+Follow the exact lifecycle: collect evidence, mechanically verify it, obtain
+explicit Sol adopt, then provider close. Treat a compatible upstream store as the source of truth,
+and resume adopted stages without rerunning them. The
+supported workflow shapes are `root_inline`, `typed_child`, and
+`isolated_role_root`; `app_thread_root` is not enabled. This is not a Codex core hook.
+Use the verified-workflows reference for the complete plan, scheduling,
+acceptance, recovery, failure, and privacy contract.
 
 ## Adapt skill-driven delegation
 
@@ -219,6 +273,11 @@ and only after all live roles pass. An explicit `--reuse-smoke` report may
 avoid a duplicate paid run only when the fixed-TTL binding validator accepts
 the recent local evidence. Preserve the emitted manifest.
 
+Active apply must persist a private `0600` installed-state record under
+`$CODEX_HOME/gearbox/activations/<installId>.json`; repository report cleanup
+must not disable active status. Keep the emitted ignored manifest separately as
+the rollback and release-evidence input.
+
 If post-install validation fails, require automatic rollback. For a later
 manual rollback, use the exact manifest path and avoid `--force` unless the
 owner accepts overwriting post-install drift.
@@ -241,7 +300,7 @@ the managed command; it disables the folder instead of deleting it.
 ## Prepare a public release
 
 Generate the paired machine-readable and Markdown evidence with
-`npm run release:evidence -- --smoke <path> --sdd <path> --acceptance <path> --activation-manifest <path> --usage <path>`, then
+`npm run release:evidence -- --latest-current --workflow-contract docs/workflow-contract-evidence.json --usage reports/<run>/real-work-usage.json`, then
 run unit tests, `npm run release:check`, the official skill validator when
 available, and a local secret scanner. Keep raw reports, auth state, complete
 user config, rollout contents, and private filesystem paths out of Git.

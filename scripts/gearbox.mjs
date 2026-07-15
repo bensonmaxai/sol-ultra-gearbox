@@ -31,16 +31,21 @@ import {
   MULTI_AGENT_SESSION_THREADS,
   RUNTIME_BINDING_FILES,
   ROLE_SPECS,
+  activeActivationRecordPath,
   atomicWrite,
   backupFile,
+  captureActiveConfigIntegrity,
   captureConfigRollbackState,
   cleanupProbeArtifacts,
   findRecentRollouts,
   findProbeRollouts,
   hashTree,
   installDispatchRuntime,
+  persistActiveActivationRecord,
   readOptional,
+  readCurrentWorkflowContractEvidence,
   redactSensitive,
+  removeActiveActivationRecord,
   removeOwnedSmokeProjectEntries,
   renderAgentsMd,
   renderConfig,
@@ -52,6 +57,7 @@ import {
   validateTypedSpawnArgs,
   validatePostInstallRootRuntime,
   validateRoleText,
+  verifyActiveActivationRecordForRemoval,
   verifyProbe,
   writeJson,
 } from "../lib/gearbox.mjs";
@@ -87,6 +93,18 @@ const SMOKE_ROOT = Object.freeze({ model: "gpt-5.6-sol", effort: "max" });
 const WRITING_SKILLS_REPETITIONS = 5;
 const WRITING_SKILLS_REASON = "DELEGATE_ISOLATED_SKILL_PRESSURE_TEST";
 const APP_CODEX_BIN = "/Applications/ChatGPT.app/Contents/Resources/codex";
+
+function appServerRootPolicy({ enabled, acceptance = null }) {
+  return {
+    kind: "app_server_root",
+    enabled,
+    transport: "stdio",
+    protocolVersion: 1,
+    launcherPath: join(CODEX_HOME, "bin", "gearbox-root"),
+    acceptanceBindingSha256:
+      acceptance?.runtimeBinding?.sha256 ?? "0".repeat(64),
+  };
+}
 const CODEX_BIN =
   process.env.CODEX_BIN ?? (existsSync(APP_CODEX_BIN) ? APP_CODEX_BIN : "codex");
 function timestamp() {
@@ -553,7 +571,9 @@ export async function runAcceptanceParallel(scenario, { decision = null } = {}) 
     const prompt = [
       "This is an explicitly authorized acceptance fixture.",
       "Call spawn_agent exactly twice and no other delegation.",
-      `Use exactly these argument objects and no extra fields:\n${exactCalls.join("\n")}`,
+      `First use exactly this Luna argument object and no extra fields:\n${exactCalls[0]}`,
+      "After the first spawn returns, call list_agents exactly once. Confirm the Luna child is running or completed before continuing.",
+      `Only then use exactly this Terra argument object and no extra fields:\n${exactCalls[1]}`,
       `Do not pass model, reasoning_effort, model_reasoning_effort, or service_tier. Wait for both children. Do not edit files. After both exact child markers arrive, reply exactly ${parentMarker}.`,
     ].join("\n");
     const command = await runCommand(CODEX_BIN, [
@@ -598,6 +618,25 @@ export async function runAcceptanceParallel(scenario, { decision = null } = {}) 
         ? acceptanceChildFacts(child, expected, spawnCall?.args)
         : { role, model: null, effort: null, depth: null, sandbox: null, writer: true, descendants: 0, declaredReadScope: null, markerReturned: false, runtimePersisted: false, tokenUsage: null };
     });
+    const lunaChild = children.find((child) =>
+      (child?.sessionMeta?.agent_role ?? child?.sessionMeta?.source?.subagent?.thread_spawn?.agent_role) === "luna_clerk",
+    );
+    const lunaSpawn = spawnCalls.find((call) => call?.args?.agent_type === "luna_clerk");
+    const terraSpawn = spawnCalls.find((call) => call?.args?.agent_type === "terra_explorer");
+    const firstSpawnIndex = lunaSpawn?.callIndex;
+    const secondSpawnIndex = terraSpawn?.callIndex;
+    const listReceipt = (parent?.toolTimeline ?? []).find((entry) =>
+      entry?.name?.endsWith("list_agents") && Number.isInteger(firstSpawnIndex) && Number.isInteger(secondSpawnIndex) &&
+      entry.callIndex > firstSpawnIndex && entry.callIndex < secondSpawnIndex,
+    );
+    const workflowCanary = {
+      firstRole: lunaSpawn?.args?.agent_type ?? null,
+      firstChildPersisted: Boolean(lunaChild?.sessionMeta && lunaChild?.turnContext),
+      listObservedBetweenSpawns: Boolean(listReceipt),
+      listReceiptRunningOrCompleted: listReceipt?.outputPresent === true && listReceipt?.runningOrCompleted === true,
+      secondRole: terraSpawn?.args?.agent_type ?? null,
+      secondSpawnAfterCanary: Boolean(listReceipt) && secondSpawnIndex > listReceipt.callIndex,
+    };
     const parentId = parent?.sessionId ?? parent?.sessionMeta?.id ?? parent?.sessionMeta?.session_id;
     const childIds = children.map((child) => child?.sessionId ?? child?.sessionMeta?.id ?? child?.sessionMeta?.session_id);
     const lineageExact = parents.length === 1 && summaries.length === 3 && children.length === 2 &&
@@ -618,6 +657,7 @@ export async function runAcceptanceParallel(scenario, { decision = null } = {}) 
       lineageExact,
       filesystemUnchanged,
       parentMarkerReturned,
+      workflowCanary,
     };
     topology.writerCount = childFacts.filter((child) => child.writer).length;
     const childRuntime = childFacts.length === 2 && ACCEPTANCE_PARALLEL_CHILDREN.every((spec) =>
@@ -628,7 +668,10 @@ export async function runAcceptanceParallel(scenario, { decision = null } = {}) 
     answer = acceptanceResult(scenario, {
       decision,
       pass: command.code === 0 && !command.timedOut && validSpawns && childRuntime &&
-        lineageExact && filesystemUnchanged && parentMarkerReturned && topology.writerCount === 0 && topology.descendantCount === 0,
+        lineageExact && filesystemUnchanged && parentMarkerReturned && topology.writerCount === 0 && topology.descendantCount === 0 &&
+        workflowCanary.firstRole === "luna_clerk" && workflowCanary.firstChildPersisted &&
+        workflowCanary.listObservedBetweenSpawns && workflowCanary.listReceiptRunningOrCompleted &&
+        workflowCanary.secondRole === "terra_explorer" && workflowCanary.secondSpawnAfterCanary,
       runtime: acceptanceRuntime(parent),
       topology,
       cleanup: { pass: false },
@@ -641,6 +684,28 @@ export async function runAcceptanceParallel(scenario, { decision = null } = {}) 
     try { cleanup = (await cleanupProbeArtifacts([probeHome, fixture])).removed.length === 2; } catch { cleanup = false; }
   }
   return { ...answer, cleanup: { pass: cleanup } };
+}
+
+export function mcpConfigDoctorPasses(check) {
+  const optionalDetailFields = [
+    "configured servers",
+    "disabled servers",
+    "optional reachability failed",
+    "stdio servers",
+    "streamable_http servers",
+  ];
+  const details = check?.details;
+  const exactOptionalDetails = details !== null && typeof details === "object" &&
+    !Array.isArray(details) &&
+    JSON.stringify(Object.keys(details).sort()) ===
+      JSON.stringify(optionalDetailFields.sort()) &&
+    optionalDetailFields.every((field) => typeof details[field] === "string");
+  return check?.status === "ok" || (
+    check?.status === "warning" &&
+    check?.summary === "MCP configuration has optional issues" &&
+    exactOptionalDetails &&
+    details["optional reachability failed"].length > 0
+  );
 }
 
 async function runDoctor() {
@@ -707,7 +772,9 @@ async function runDoctor() {
   const doctorChecks = Object.fromEntries(
     requiredDoctorChecks.map((name) => [
       name,
-      codexDoctor?.checks?.[name]?.status === "ok",
+      name === "mcp.config"
+        ? mcpConfigDoctorPasses(codexDoctor?.checks?.[name])
+        : codexDoctor?.checks?.[name]?.status === "ok",
     ]),
   );
 
@@ -1729,6 +1796,18 @@ async function rollbackFromManifest(manifestPath, { force = false, reason = null
     return manifest;
   }
   const agentsPath = manifest.agents.path;
+  let activationRecordState = null;
+  if (manifest.activation?.recordPath !== undefined) {
+    activationRecordState = await verifyActiveActivationRecordForRemoval({
+      codexHome: CODEX_HOME,
+      activation: manifest.activation,
+      expectedSha256: manifest.activation.recordSha256 ?? null,
+    });
+    if (activationRecordState.exists &&
+      !/^[a-f0-9]{64}$/.test(manifest.activation.recordSha256 ?? "")) {
+      throw new Error("activation manifest is missing its record hash");
+    }
+  }
   const currentConfig = await readFile(configPath, "utf8");
   const currentAgents = await readFile(agentsPath, "utf8");
   if (!force && manifest.config.afterSha256 && sha256(currentConfig) !== manifest.config.afterSha256) {
@@ -1795,6 +1874,13 @@ async function rollbackFromManifest(manifestPath, { force = false, reason = null
     });
     actions.push({ path: join(CODEX_HOME, "gearbox", "runtime"), action: "dispatch_runtime_restored" });
   }
+  if (activationRecordState?.exists) {
+    actions.push(await removeActiveActivationRecord({
+      codexHome: CODEX_HOME,
+      activation: manifest.activation,
+      expectedSha256: manifest.activation.recordSha256,
+    }));
+  }
   manifest.status = reason ? "failed_rolled_back" : "rolled_back";
   manifest.rollback = {
     at: new Date().toISOString(),
@@ -1820,7 +1906,14 @@ async function readManagedPolicyTarget(path) {
   return assertManagedPolicyTarget(source);
 }
 
-async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null } = {}) {
+async function installAfterSmoke(
+  smoke,
+  {
+    dispatchMode = null,
+    acceptance = null,
+    workflowContractEvidenceSha256 = null,
+  } = {},
+) {
   if (dispatchMode !== null && !["shadow", "active"].includes(dispatchMode)) {
     throw new Error("dispatch mode must be shadow or active");
   }
@@ -1828,6 +1921,9 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
   const reportDirectory = join(REPO_ROOT, "reports", `${runTimestamp}-apply`);
   const manifestPath = join(reportDirectory, "install-manifest.json");
   const installId = `gearbox-${runTimestamp}`;
+  const recordPath = dispatchMode === "active"
+    ? activeActivationRecordPath(CODEX_HOME, installId)
+    : null;
   if (dispatchMode === "active") {
     const trusted = validateTrustedAcceptance({
       report: acceptance,
@@ -1835,15 +1931,29 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
       reportFile: { pathConfined: true, regular: true, symlink: false },
     });
     if (!trusted.pass) throw new Error("active dispatch requires trusted acceptance evidence");
+    if (!/^[a-f0-9]{64}$/.test(workflowContractEvidenceSha256 ?? "")) {
+      throw new Error("active dispatch requires current workflow contract evidence");
+    }
   }
   const policy = dispatchMode === null ? null : createDispatchPolicy(
     dispatchMode === "active"
-      ? { mode: "active", allowTypedBridge: false, activation: { installId, manifestPath } }
+      ? {
+          mode: "active",
+          allowTypedBridge: false,
+          activation: { installId, recordPath },
+          rootProvider: appServerRootPolicy({ enabled: true, acceptance }),
+        }
       : { mode: "shadow", allowTypedBridge: false, activation: null },
   );
   const policySource = policy === null ? null : serializeDispatchPolicy(policy);
   const policyTarget = join(CODEX_HOME, DISPATCH_POLICY_RELATIVE_PATH);
   if (policySource !== null) await readManagedPolicyTarget(policyTarget);
+  if (dispatchMode === "active") {
+    const currentWorkflowContract = await readCurrentWorkflowContractEvidence(REPO_ROOT);
+    if (currentWorkflowContract.sha256 !== workflowContractEvidenceSha256) {
+      throw new Error("workflow contract evidence drifted before active apply");
+    }
+  }
   const backupDirectory = join(
     CODEX_HOME,
     "backups",
@@ -1920,18 +2030,21 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
     smokeEvidence: smoke.reuse ?? { mode: "fresh_smoke" },
     activation: dispatchMode === "active" ? {
       installId,
+      recordPath,
       manifestPath,
       repositoryRoot: REPO_ROOT,
       policySha256: policy.sha256,
       acceptanceBindingSha256: acceptance.runtimeBinding.sha256,
       writingSkillsEvidenceSha256:
         smoke.writingSkillsAdapter.evidenceSha256,
+      workflowContractEvidenceSha256,
     } : null,
     config: {
       path: configPath,
       beforeSha256: sha256(configSource),
       afterSha256: sha256(configTarget),
       mode: configMode,
+      integrity: captureActiveConfigIntegrity(configTarget, CODEX_HOME),
       rollbackState: configRollbackState,
       managedMarkers: [
         CONFIG_LEGACY_THREADS_MARKER,
@@ -1951,6 +2064,7 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
   };
 
   let manifestPersisted = false;
+  let persistedActivationRecord = null;
   try {
     await writeJson(manifestPath, manifest);
     manifestPersisted = true;
@@ -1976,7 +2090,7 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
     const staticChecks = {
       strictConfig: strict.code === 0,
       configLoad: doctorJson?.checks?.["config.load"]?.status === "ok",
-      mcpConfig: doctorJson?.checks?.["mcp.config"]?.status === "ok",
+      mcpConfig: mcpConfigDoctorPasses(doctorJson?.checks?.["mcp.config"]),
       installation: doctorJson?.checks?.installation?.status === "ok",
     };
     manifest.staticChecks = staticChecks;
@@ -1992,6 +2106,14 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
 
     manifest.status = "applied";
     manifest.completedAt = new Date().toISOString();
+    if (dispatchMode === "active") {
+      persistedActivationRecord = await persistActiveActivationRecord({
+        codexHome: CODEX_HOME,
+        manifest,
+        policy,
+      });
+      manifest.activation.recordSha256 = persistedActivationRecord.sha256;
+    }
     await writeJson(manifestPath, manifest);
     await atomicWrite(
       join(reportDirectory, "result.md"),
@@ -1999,6 +2121,18 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
     );
     return { manifestPath, manifest };
   } catch (error) {
+    let activationCleanupError = null;
+    if (persistedActivationRecord !== null) {
+      try {
+        await removeActiveActivationRecord({
+          codexHome: CODEX_HOME,
+          activation: manifest.activation,
+          expectedSha256: persistedActivationRecord.sha256,
+        });
+      } catch (cleanupError) {
+        activationCleanupError = cleanupError;
+      }
+    }
     if (manifestPersisted) {
       await rollbackFromManifest(manifestPath, {
         force: true,
@@ -2006,6 +2140,12 @@ async function installAfterSmoke(smoke, { dispatchMode = null, acceptance = null
       });
     } else if (dispatchInstall !== null) {
       await rollbackDispatchRuntime({ manifest: dispatchInstall, force: true });
+    }
+    if (activationCleanupError !== null) {
+      throw new AggregateError(
+        [error, activationCleanupError],
+        "Active apply failed and activation record cleanup also failed",
+      );
     }
     throw error;
   }
@@ -2059,9 +2199,23 @@ async function cleanupSmokeProjects(manifestPath) {
   return manifest.postApplyCleanup;
 }
 
-export async function dryRunApply({ dispatchMode = null } = {}) {
+export async function dryRunApply({
+  dispatchMode = null,
+  expectedWorkflowContractEvidenceSha256 = null,
+} = {}) {
   if (dispatchMode !== null && !["shadow", "active"].includes(dispatchMode)) {
     throw new Error("dispatch mode must be shadow or active");
+  }
+  const currentWorkflowContract = dispatchMode === "active"
+    ? await readCurrentWorkflowContractEvidence(REPO_ROOT)
+    : null;
+  if (
+    currentWorkflowContract !== null &&
+    (!/^[a-f0-9]{64}$/.test(currentWorkflowContract.sha256 ?? "") ||
+      (expectedWorkflowContractEvidenceSha256 !== null &&
+        currentWorkflowContract.sha256 !== expectedWorkflowContractEvidenceSha256))
+  ) {
+    throw new Error("active dry run requires current workflow contract evidence");
   }
   const doctor = await runDoctor();
   const configPath = join(CODEX_HOME, "config.toml");
@@ -2072,14 +2226,30 @@ export async function dryRunApply({ dispatchMode = null } = {}) {
   const agentsTarget = renderAgentsMd(agentsSource);
   const dispatch = dispatchMode === null ? null : (() => {
     const policy = dispatchMode === "active"
-      ? createDispatchPolicy({ mode: "active", allowTypedBridge: false, activation: { installId: "preview", manifestPath: join(REPO_ROOT, "reports", "preview", "install-manifest.json") } })
+      ? createDispatchPolicy({
+          mode: "active",
+          allowTypedBridge: false,
+          activation: { installId: "preview", recordPath: activeActivationRecordPath(CODEX_HOME, "preview") },
+          rootProvider: appServerRootPolicy({ enabled: true }),
+        })
       : createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null });
     const policySource = serializeDispatchPolicy(policy);
     return {
       mode: policy.mode,
       policySha256: sha256(policySource),
+      rootProvider: policy.rootProvider ? {
+        kind: policy.rootProvider.kind,
+        enabled: policy.rootProvider.enabled,
+        transport: policy.rootProvider.transport,
+        protocolVersion: policy.rootProvider.protocolVersion,
+        acceptanceBound: /^[a-f0-9]{64}$/.test(
+          policy.rootProvider.acceptanceBindingSha256,
+        ),
+      } : null,
       runtime: DISPATCH_RUNTIME_FILES.map((path) => ({ path, sha256: null })),
       wrapper: { path: "scripts/gearbox-dispatch", sha256: null },
+      rootWrapper: { path: "scripts/gearbox-root", sha256: null },
+      workflowContractEvidenceSha256: currentWorkflowContract?.sha256 ?? null,
       acceptanceRequired: dispatchMode === "active",
       acceptanceValidated: false,
     };
@@ -2090,6 +2260,7 @@ export async function dryRunApply({ dispatchMode = null } = {}) {
       entry.sha256 = sha256(await readFile(join(REPO_ROOT, entry.path), "utf8"));
     }
     dispatch.wrapper.sha256 = sha256(await readFile(join(REPO_ROOT, dispatch.wrapper.path), "utf8"));
+    dispatch.rootWrapper.sha256 = sha256(await readFile(join(REPO_ROOT, dispatch.rootWrapper.path), "utf8"));
   }
   return {
     pass: doctor.pass,
@@ -2197,8 +2368,15 @@ async function main() {
     if (args.includes("--dispatch-mode") && !dispatchMode) {
       throw new Error("--dispatch-mode requires a mode");
     }
+    const workflowContractEvidence = dispatchMode === "active"
+      ? await readCurrentWorkflowContractEvidence(REPO_ROOT)
+      : null;
     if (args.includes("--dry-run")) {
-      const report = await dryRunApply({ dispatchMode });
+      const report = await dryRunApply({
+        dispatchMode,
+        expectedWorkflowContractEvidenceSha256:
+          workflowContractEvidence?.sha256 ?? null,
+      });
       process.stdout.write(`${JSON.stringify(redactSensitive(report), null, 2)}\n`);
       if (!report.pass) process.exitCode = 1;
       return;
@@ -2230,7 +2408,11 @@ async function main() {
     if (dispatchMode === "active" && !acceptance.pass) {
       throw new Error("Acceptance exam failed; global config was not changed");
     }
-    const result = await installAfterSmoke(smoke, { dispatchMode, acceptance });
+    const result = await installAfterSmoke(smoke, {
+      dispatchMode,
+      acceptance,
+      workflowContractEvidenceSha256: workflowContractEvidence?.sha256 ?? null,
+    });
     process.stdout.write("GEARBOX_APPLY_PASS\n");
     process.stdout.write(`MANIFEST ${result.manifestPath}\n`);
     return;

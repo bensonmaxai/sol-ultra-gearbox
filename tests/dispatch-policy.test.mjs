@@ -18,7 +18,37 @@ function activePolicy() {
     allowTypedBridge: false,
     activation: {
       installId: "20260714-example",
+      recordPath: "/tmp/example/gearbox/activations/20260714-example.json",
+    },
+  });
+}
+
+function legacyActivePolicy() {
+  return createDispatchPolicy({
+    mode: "active",
+    allowTypedBridge: false,
+    activation: {
+      installId: "20260714-legacy",
       manifestPath: "/tmp/example/reports/install-manifest.json",
+    },
+  });
+}
+
+function appServerActivePolicy() {
+  return createDispatchPolicy({
+    mode: "active",
+    allowTypedBridge: false,
+    activation: {
+      installId: "20260716-app-server",
+      recordPath: "/tmp/example/gearbox/activations/20260716-app-server.json",
+    },
+    rootProvider: {
+      kind: "app_server_root",
+      enabled: true,
+      transport: "stdio",
+      protocolVersion: 1,
+      launcherPath: "/tmp/example/bin/gearbox-root",
+      acceptanceBindingSha256: "e".repeat(64),
     },
   });
 }
@@ -56,12 +86,41 @@ test("validation rejects fields and modes outside the integrity schema", () => {
     { ...policy, extra: true },
     { ...policy, mode: "preview" },
     { ...policy, allowTypedBridge: true },
-    { ...policy, activation: { ...policy.activation, manifestPath: "relative.json" } },
+    { ...policy, activation: { ...policy.activation, recordPath: "relative.json" } },
+    {
+      ...policy,
+      activation: {
+        ...policy.activation,
+        manifestPath: "/tmp/example/reports/install-manifest.json",
+      },
+    },
     { ...policy, activation: null },
     createDispatchPolicy({ mode: "shadow", allowTypedBridge: false, activation: null }),
   ];
-  cases[5] = { ...cases[5], activation: policy.activation };
+  cases[6] = { ...cases[6], activation: policy.activation };
   for (const value of cases) assert.equal(validateDispatchPolicy(value).pass, false);
+});
+
+test("legacy manifest activation remains readable during the re-activation gap", () => {
+  const policy = legacyActivePolicy();
+  assert.equal(validateDispatchPolicy(policy).pass, true);
+  assert.deepEqual(assertManagedPolicyTarget(serializeDispatchPolicy(policy)), policy);
+});
+
+test("policy v2 integrity-binds an active App Server root launcher", () => {
+  const policy = appServerActivePolicy();
+  assert.equal(policy.schemaVersion, 2);
+  assert.equal(validateDispatchPolicy(policy).pass, true);
+  assert.deepEqual(assertManagedPolicyTarget(serializeDispatchPolicy(policy)), policy);
+  for (const rootProvider of [
+    { ...policy.rootProvider, enabled: false },
+    { ...policy.rootProvider, kind: "app_thread_root" },
+    { ...policy.rootProvider, transport: "tcp" },
+    { ...policy.rootProvider, launcherPath: "relative" },
+    { ...policy.rootProvider, acceptanceBindingSha256: "invalid" },
+  ]) {
+    assert.equal(validateDispatchPolicy({ ...policy, rootProvider }).pass, false);
+  }
 });
 
 test("missing, malformed, and tampered policy files resolve off", async () => {

@@ -8,6 +8,17 @@ import { REQUIRED_RELEASE_FILES, scanText } from "../lib/release-check.mjs";
 const BUNDLED_SKILL = fileURLToPath(
   new URL("../skills/sol-ultra-gearbox/SKILL.md", import.meta.url),
 );
+const VERIFIED_WORKFLOWS = fileURLToPath(
+  new URL("../skills/sol-ultra-gearbox/references/verified-workflows.md", import.meta.url),
+);
+const QUALITY_DISPATCH = fileURLToPath(
+  new URL("../skills/sol-ultra-gearbox/references/quality-first-dispatch.md", import.meta.url),
+);
+const REPOSITORY_AGENTS = fileURLToPath(new URL("../AGENTS.md", import.meta.url));
+const README = fileURLToPath(new URL("../README.md", import.meta.url));
+const OPENAI_YAML = fileURLToPath(
+  new URL("../skills/sol-ultra-gearbox/agents/openai.yaml", import.meta.url),
+);
 const DISPATCH_LEDGER_TEST = fileURLToPath(
   new URL("../tests/dispatch-ledger.test.mjs", import.meta.url),
 );
@@ -27,6 +38,12 @@ test("release candidate requirements include the quality-first dispatch referenc
       "skills/sol-ultra-gearbox/references/quality-first-dispatch.md",
     ),
   );
+  assert.ok(
+    REQUIRED_RELEASE_FILES.includes(
+      "skills/sol-ultra-gearbox/references/verified-workflows.md",
+    ),
+  );
+  assert.ok(REQUIRED_RELEASE_FILES.includes("docs/workflow-contract-evidence.json"));
 });
 
 test("dispatch-ledger fixture constructs its private path without embedding it in release text", async () => {
@@ -71,4 +88,54 @@ test("managed policy and bundled skill publish the quality-first dispatch contra
   }
   assert.match(source, /isolated root, never a child/i);
   assert.match(source, /references\/quality-first-dispatch\.md/);
+});
+
+test("managed policy, repository policy, and bundled skill publish the verified workflow contract", async () => {
+  const [skill, reference, agents, readme, openaiYaml] = await Promise.all([
+    readFile(BUNDLED_SKILL, "utf8"),
+    readFile(VERIFIED_WORKFLOWS, "utf8"),
+    readFile(REPOSITORY_AGENTS, "utf8"),
+    readFile(README, "utf8"),
+    readFile(OPENAI_YAML, "utf8"),
+  ]);
+  const concepts = [
+    /validated.*DAG/i,
+    /schema.*version 2/i,
+    /reserved.*verification/i,
+    /first real execution.*canary/i,
+    /evidence.*verify.*adopt.*close/is,
+    /upstream.*source of truth/i,
+    /resume.*adopted/i,
+    /root_inline.*typed_child.*isolated_role_root/is,
+    /app_thread_root.*not enabled/i,
+    /not.*Codex core hook/i,
+  ];
+  for (const value of [WORKFLOW_POLICY, skill, reference, agents]) {
+    for (const concept of concepts) assert.match(value, concept);
+  }
+  assert.match(skill, /references\/verified-workflows\.md/);
+  assert.match(readme, /verified workflow orchestration/i);
+  assert.match(openaiYaml, /verified workflow/i);
+  for (const value of [readme, openaiYaml]) {
+    assert.doesNotMatch(
+      value,
+      /(?:claims?|promises?|guarantees?|delivers?)\s+(?:faster|[^.\n]{0,80}(?:speedup|savings|superior output))|app_thread_root provider/i,
+    );
+  }
+});
+
+test("public guidance distinguishes the executable App Server launcher from stock task interception", async () => {
+  const [skill, dispatch, readme] = await Promise.all([
+    readFile(BUNDLED_SKILL, "utf8"),
+    readFile(QUALITY_DISPATCH, "utf8"),
+    readFile(README, "utf8"),
+  ]);
+  for (const value of [WORKFLOW_POLICY, skill, dispatch, readme]) {
+    assert.match(value, /app_server_root/i);
+    assert.match(value, /gearbox-root/i);
+    assert.match(value, /turn\/start/i);
+    assert.match(value, /persisted.*model.*effort|persisted.*runtime/is);
+    assert.match(value, /not.*(?:stock Desktop interception|Codex core hook)/i);
+    assert.match(value, /app_thread_root.*(?:disabled|not enabled)/i);
+  }
 });

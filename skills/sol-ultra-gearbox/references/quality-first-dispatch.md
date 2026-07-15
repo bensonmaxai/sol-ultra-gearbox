@@ -16,10 +16,17 @@ unknown-version, hash-mismatched, or unmanaged policy is `off`.
 | `shadow` | Calculate and record the decision, but the Sol root executes it. |
 | `active` | Execute only a decision that passes every managed gate. |
 
-First activation requires trusted current ten-question acceptance evidence and
-an applied activation manifest. It must set `allowTypedBridge=false`.
+First activation requires trusted current ten-question acceptance evidence, a
+persistent managed activation record, and an applied local rollback manifest.
+It must set `allowTypedBridge=false`.
 `typed_child_bridge` remains unavailable unless a future, explicitly enabled
 capability has its own verified runtime evidence.
+
+Routing policy and workflow policy are separate. Task topology selects Sol
+Low/Medium/Max/Ultra, responsibility selects Luna/Terra/Sol, and provider
+capabilities select `root_inline`, `typed_child`, or `isolated_role_root`.
+Workflow adapters may constrain delegation, but cannot change a stock task's
+root model or effort after the turn begins.
 
 ## Exact routing order
 
@@ -31,11 +38,29 @@ rejection.
 3. Run `gearbox-dispatch plan` with separate `agentTypeVisible`,
    `isolatedRunnerVerified`, runtime-metadata, and permission facts.
 4. `root_inline`: Sol completes the task.
-5. `typed_child`: Sol calls `spawn_agent` with exact typed arguments, waits, closes the child, and validates runtime evidence.
+5. `typed_child`: Sol calls `spawn_agent` with exact typed arguments, persists the receipt, collects evidence, mechanically verifies it, explicitly adopts it, and only then closes the provider.
 6. `isolated_role_root`: run `gearbox-dispatch run-isolated`; it is an isolated root, never a child.
 7. Reject missing or mismatched evidence before integration.
-8. On a hard active-mode failure, stop delegation and use the hash-bound policy activation manifest with the managed rollback command.
+8. On a hard active-mode failure, stop delegation and use the hash-bound local rollback manifest with the managed rollback command.
 9. Sol integrates, runs final relevant tests, records the privacy-safe outcome, and cleans the packet.
+
+Direct bounded packet-v1 work keeps this routing behavior. For a validated DAG,
+compile a self-contained schema version 2 packet for each stage and use the
+verified workflow lifecycle below.
+
+## Verified workflow lifecycle
+
+Preserve reserved verification and recovery attempts. Materialize the first
+real execution as the canary, require a persisted running/completed receipt,
+and release no deferred stage when the canary fails. Then collect evidence,
+verify hashes/runtime/scope, obtain explicit Sol adoption, and close the
+provider. `verified` alone never unlocks a dependent.
+
+Treat a compatible upstream workflow store as the source of truth; use one
+private managed ledger only when no compatible upstream source exists. Resume
+adopted work without rerunning it and block incomplete executions. Workflow
+shapes remain `root_inline`, `typed_child`, and `isolated_role_root`;
+`app_thread_root` is not enabled. This is not a Codex core hook.
 
 The only shape names are `root_inline`, `typed_child`, `isolated_role_root`,
 and `typed_child_bridge`. Verified Luna/Terra isolated roots solve read-only
@@ -58,11 +83,40 @@ cleanup, policy, ambiguity, hidden-coupling, or security failure receives no
 retry.
 
 After a hard active-mode failure, stop delegation for the task. Active status
-verifies managed configuration, AGENTS, role, launcher, runtime, and wrapper
-hashes and modes, while status and public evidence redact the activation
-manifest path. Only the managed rollback command may consume that manifest to
-alter global state. Do not publish a savings percentage or estimator until ten
-comparable root-inclusive real-work pairs exist.
+reads the private managed record beneath `$CODEX_HOME/gearbox/activations/` and
+verifies exact managed config blocks, activation-bound safety semantics,
+AGENTS, role, launcher, runtime, and wrapper hashes and modes. Unrelated
+whole-file config drift remains visible but does not force `off`. Every failure
+returns a privacy-safe reason code and component breakdown without depending on
+repository reports. Status and public evidence redact both record and local
+rollback-manifest paths. Only the managed rollback command may consume that
+manifest to alter global state. Do not publish a savings percentage or estimator
+until ten comparable root-inclusive real-work pairs exist.
+
+For a legacy activation without a scoped snapshot, bind root model and effort
+to the persisted activation smoke and enforce the strict safe contract for the
+remaining semantic values. Every new apply captures the complete scoped
+snapshot and exact semantic equality.
+
+Policy v2 may enable `app_server_root` only through the installed foreground
+`gearbox-root` launcher. It classifies an owned packet before the first turn,
+passes the selected Sol model and effort to `turn/start`, rejects interactive
+authority expansion, verifies persisted rollout identity and every workspace
+change against the declared write scope, performs `thread/read`, archives and
+unsubscribes, and requires App Server to exit cleanly. The private receipt and
+paid-acceptance runtime binding are policy-bound. Any missing fact yields a
+reason-coded `root_inline` fallback without starting a turn. This is not stock
+Desktop interception, and workflow-stage `app_thread_root` remains disabled.
+The independent workflow-adapter gate runs before host discovery. Host
+capability comes only from an exact initialize response plus a compatible
+runtime-bound App Server version; an unknown version closes before
+`thread/start` and falls back. Close is bounded through stdin EOF, SIGTERM
+grace, and SIGKILL.
+The no-turn handshake proves transport only. Fresh runtime evidence requires an
+owner-authorized paid `gearbox-root smoke` after activation, and its private
+receipt must bind the fixed result marker plus persisted route, scope, usage,
+readback, archive, unsubscribe, and clean-exit evidence. Release generation
+must uniquely locate and reparse the matching rollout before publishing pass.
 
 Before reporting an applied active policy, require a persisted fresh CLI root
 on `gpt-5.6-sol` at Max or Ultra effort. This is an isolated CLI quality-floor

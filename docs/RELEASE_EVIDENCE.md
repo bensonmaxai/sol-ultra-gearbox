@@ -5,28 +5,30 @@ This file is generated from `docs/release-evidence.json`. Manual edits fail
 
 ## Deterministic checks
 
-- Generated: 2026-07-14T11:44:17.311Z
-- Source manifest: `f23e0ed833be9e2d9b5b6c8ec73d35e93d4927a90985f97aaef82b45cb5d4b1d` (59 files)
-- Tests: PASS (143/143)
+- Generated: 2026-07-15T18:28:59.456Z
+- Source manifest: `4ff3429fb9b645fa50772e6a16401b1763b820c5211f9cec6a698ca47333102c` (95 files)
+- Tests: PASS (283/283)
+- Verified workflow contract: PASS (5/5); Q10 canary: verified
 
 ## Runtime evidence
 
 - Active installation: PASS; integrity pass; bridge disabled; fresh root `gpt-5.6-sol` / ultra
-- Bound config state: `1bd5662de4b1` -> `1bd5662de4b1` (unchanged); policy `89841adaee14`
-- Six-role smoke: PASS (6/6), root metadata verified, commit `d00d68e236dc`
+- Bound config state: `7b02e60f4c29` -> `7b02e60f4c29` (unchanged); policy `833ca6296ac0`
+- Six-role smoke: PASS (6/6), root metadata verified, commit `7224f5bdbccd`
 - Writing-skills pressure test: PASS (5 RED, 5 GREEN), isolated role `sol_skill_tester`
-- SDD adapter probe: PASS (terra_worker -> sol_reviewer), commit `d00d68e236dc`
+- SDD adapter probe: PASS (terra_worker -> sol_reviewer), commit `7224f5bdbccd`
 - Ten-question acceptance exam: PASS (10/10), active eligible: yes
-- Acceptance execution shapes: `isolated_role_root`, `root_inline`, `typed_child`; runtime binding `21221c7317bb`
+- Acceptance execution shapes: `isolated_role_root`, `root_inline`, `typed_child`; runtime binding `2967202f6b70`
+- App Server root launcher: PASS; `gpt-5.6-sol` / low; fixed smoke bound; persisted rollout reverified; scope verified; lifecycle closed
 
 | Role | Actual model | Effort | Sandbox | Parent tokens | Child tokens | Status |
 |---|---|---|---|---:|---:|---|
-| `luna_clerk` | `gpt-5.6-luna` | low | read-only | 39979 | 26537 | PASS |
-| `terra_explorer` | `gpt-5.6-terra` | medium | read-only | 39956 | 26439 | PASS |
-| `terra_worker` | `gpt-5.6-terra` | high | workspace-write | 40930 | 70918 | PASS |
-| `sol_reviewer` | `gpt-5.6-sol` | high | read-only | 40529 | 40446 | PASS |
-| `terra_ultra_specialist` | `gpt-5.6-terra` | ultra | workspace-write | 41062 | 27483 | PASS |
-| `terra_max_worker` | `gpt-5.6-terra` | max | workspace-write | 41447 | 57120 | PASS |
+| `luna_clerk` | `gpt-5.6-luna` | low | read-only | 40884 | 26983 | PASS |
+| `terra_explorer` | `gpt-5.6-terra` | medium | read-only | 41051 | 27167 | PASS |
+| `terra_worker` | `gpt-5.6-terra` | high | workspace-write | 42023 | 101482 | PASS |
+| `sol_reviewer` | `gpt-5.6-sol` | high | read-only | 41234 | 55679 | PASS |
+| `terra_ultra_specialist` | `gpt-5.6-terra` | ultra | workspace-write | 41989 | 28124 | PASS |
+| `terra_max_worker` | `gpt-5.6-terra` | max | workspace-write | 42213 | 71755 | PASS |
 
 
 Runtime reports remain local and ignored. This public evidence contains only

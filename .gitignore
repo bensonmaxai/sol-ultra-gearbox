@@ -1,6 +1,7 @@
 reports/
 reports/dispatch-ledger.jsonl
 node_modules/
+.worktrees/
 .DS_Store
 *.log
 .env
