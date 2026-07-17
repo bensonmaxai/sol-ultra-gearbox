@@ -2,6 +2,9 @@ reports/
 reports/dispatch-ledger.jsonl
 node_modules/
 .worktrees/
+/.superpowers/
+/media/
+/outputs/
 .DS_Store
 *.log
 .env

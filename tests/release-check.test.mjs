@@ -15,6 +15,7 @@ const QUALITY_DISPATCH = fileURLToPath(
   new URL("../skills/sol-ultra-gearbox/references/quality-first-dispatch.md", import.meta.url),
 );
 const REPOSITORY_AGENTS = fileURLToPath(new URL("../AGENTS.md", import.meta.url));
+const REPOSITORY_GITIGNORE = fileURLToPath(new URL("../.gitignore", import.meta.url));
 const README = fileURLToPath(new URL("../README.md", import.meta.url));
 const OPENAI_YAML = fileURLToPath(
   new URL("../skills/sol-ultra-gearbox/agents/openai.yaml", import.meta.url),
@@ -44,6 +45,18 @@ test("release candidate requirements include the quality-first dispatch referenc
     ),
   );
   assert.ok(REQUIRED_RELEASE_FILES.includes("docs/workflow-contract-evidence.json"));
+});
+
+test("owner-local working directories stay outside release candidates", async () => {
+  const rules = new Set(
+    (await readFile(REPOSITORY_GITIGNORE, "utf8"))
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean),
+  );
+  for (const path of ["/.superpowers/", "/media/", "/outputs/"]) {
+    assert.ok(rules.has(path), `${path} must remain ignored`);
+  }
 });
 
 test("dispatch-ledger fixture constructs its private path without embedding it in release text", async () => {
