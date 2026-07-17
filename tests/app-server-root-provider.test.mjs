@@ -109,7 +109,8 @@ lines.on("line", async (line) => {
   if (value.method === "initialize") return send({ id: value.id, result:
     process.env.TEST_NULL_INITIALIZE ? null : {
       userAgent: "Codex Desktop/" +
-        (process.env.TEST_UNSUPPORTED_VERSION ? "9.9.9" : "0.144.2") +
+        (process.env.TEST_UNSUPPORTED_VERSION ? "9.9.9" :
+          (process.env.TEST_SERVER_VERSION || "0.145.0")) +
         " (fixture; arm64) dumb (sol-ultra-gearbox-root; 1.0.0)",
       codexHome: process.env.TEST_CODEX_HOME,
       platformFamily: "unix",
@@ -188,18 +189,20 @@ lines.on("line", async (line) => {
 
 test("initialize evidence derives the exact supported host capabilities", () => {
   const codexHome = "/private/tmp/codex-home";
-  const discovery = deriveAppServerRootCapabilities({
-    userAgent: "Codex Desktop/0.144.2 (fixture; arm64) dumb (sol-ultra-gearbox-root; 1.0.0)",
-    codexHome,
-    platformFamily: "unix",
-    platformOs: "macos",
-  }, { codexHome });
-  assert.equal(discovery.pass, true);
-  assert.deepEqual(
-    Object.keys(discovery.capabilities).sort(),
-    [...APP_SERVER_ROOT_PROVIDER_CAPABILITIES].sort(),
-  );
-  assert.ok(Object.values(discovery.capabilities).every(Boolean));
+  for (const version of ["0.144.2", "0.145.0"]) {
+    const discovery = deriveAppServerRootCapabilities({
+      userAgent: `Codex Desktop/${version} (fixture; arm64) dumb (sol-ultra-gearbox-root; 1.0.0)`,
+      codexHome,
+      platformFamily: "unix",
+      platformOs: "macos",
+    }, { codexHome });
+    assert.equal(discovery.pass, true, version);
+    assert.deepEqual(
+      Object.keys(discovery.capabilities).sort(),
+      [...APP_SERVER_ROOT_PROVIDER_CAPABILITIES].sort(),
+    );
+    assert.ok(Object.values(discovery.capabilities).every(Boolean));
+  }
   assert.equal(deriveAppServerRootCapabilities({
     userAgent: "Codex Desktop/9.9.9 (fixture)",
     codexHome,
@@ -214,7 +217,7 @@ test("built-in provider smoke is a deterministic Sol Low read-only turn", () => 
     policy: policy("/private/tmp/codex-home"),
     packet: value,
     capabilities: deriveAppServerRootCapabilities({
-      userAgent: "Codex Desktop/0.144.2 (fixture)",
+      userAgent: "Codex Desktop/0.145.0 (fixture)",
       codexHome: "/private/tmp/codex-home",
       platformFamily: "unix",
       platformOs: "macos",
@@ -252,7 +255,7 @@ test("foreground App Server root verifies route, rollout, scope, and close evide
   assert.equal(result.receipt.value.lifecycle.archived, true);
   assert.equal(result.receipt.value.lifecycle.unsubscribed, true);
   assert.equal(result.receipt.value.lifecycle.serverExitCode, 0);
-  assert.equal(result.receipt.value.provider.serverVersion, "0.144.2");
+  assert.equal(result.receipt.value.provider.serverVersion, "0.145.0");
   const validation = validateAppServerRootReceipt(result.receipt.value, {
     policySha256: policy(codexHome).sha256,
   });

@@ -198,7 +198,7 @@ against the declared write scope, reads the completed turn back, then
 archives, unsubscribes, and closes App Server. Its privacy-safe receipt binds
 the task, policy, route, runtime, scope, token, and lifecycle evidence.
 Host capability is derived from the exact `initialize` response and the
-runtime-bound compatible App Server version (`0.144.2`), not self-declared by
+runtime-bound compatible App Server versions (`0.144.2` and `0.145.0`), not self-declared by
 the launcher. An unknown version is closed before `thread/start` and falls back
 to `root_inline`. The separate workflow-adapter policy gate runs before host
 discovery, so an unknown skill or missing writing-skills owner opt-in never
