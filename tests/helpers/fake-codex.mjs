@@ -1,6 +1,7 @@
 import { chmod, writeFile } from "node:fs/promises";
 
 const SOURCE = `#!/usr/bin/env node
+import { spawn } from "node:child_process";
 import { chmod, lstat, mkdir, rename, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -21,7 +22,20 @@ const mode = process.env.FAKE_CODEX_MODE ?? "success";
 const auth = await lstat(join(process.env.CODEX_HOME, "auth.json"));
 if (!auth.isSymbolicLink() || !/sol-ultra-gearbox-v2-dispatch-home-(luna_clerk|terra_explorer|sol_skill_tester)-/.test(process.env.CODEX_HOME)) process.exit(72);
 
-if (mode === "timeout") {
+if (mode === "timeout" || mode === "timeout_tree") {
+  if (mode === "timeout_tree") {
+    const descendant = spawn(
+      process.execPath,
+      ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 60_000);"],
+      { stdio: "ignore" },
+    );
+    await writeFile(
+      process.env.FAKE_CODEX_DESCENDANT_PID_FILE,
+      String(descendant.pid) + "\\n",
+      "utf8",
+    );
+    descendant.unref();
+  }
   process.on("SIGTERM", () => {});
   setTimeout(() => process.exit(0), 60_000);
 }

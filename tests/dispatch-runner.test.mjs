@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { lstat, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -42,6 +42,25 @@ const testerSource = roleSource
   .replace("gpt-5.6-luna", "gpt-5.6-sol")
   .replace('model_reasoning_effort = "low"', 'model_reasoning_effort = "high"');
 const receiveDeliverable = async (value) => value === '{"kind":"fake-deliverable","value":"verified"}';
+
+function processExists(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+async function waitForProcessExit(pid, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!processExists(pid)) return true;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+  }
+  return !processExists(pid);
+}
 
 test("isolated-root arguments use the selected cheap read role without parent delegation", () => {
   const instructions = parseRoleInstructions(roleSource);
@@ -350,4 +369,40 @@ test("isolated runner drains large JSON output and force-kills a SIGTERM-resista
     assert.equal(timeout.checks.commandDidNotTimeout, false);
     assert.ok(Date.now() - started < 1_000);
   } finally { await rm(root, { recursive: true, force: true }); await rm(cwd, { recursive: true, force: true }); }
+});
+
+test("isolated runner timeout terminates the complete POSIX process group", { skip: process.platform === "win32" }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "dispatch-runner-process-group-"));
+  const cwd = await mkdtemp(join(tmpdir(), "dispatch-runner-process-group-work-"));
+  const descendantPidPath = join(root, "descendant.pid");
+  let descendantPid = null;
+  try {
+    const fake = await createFakeCodex(join(root, "fake-codex.mjs"));
+    await writeFile(join(root, "auth.json"), "fake-auth\n", "utf8");
+    const result = await runIsolatedRole({
+      codexBin: fake,
+      codexHome: root,
+      roleSpec: luna,
+      roleSource,
+      cwd,
+      task,
+      taskHash: sha256(task),
+      timeoutMs: 1_000,
+      env: {
+        FAKE_CODEX_MODE: "timeout_tree",
+        FAKE_CODEX_DESCENDANT_PID_FILE: descendantPidPath,
+      },
+      onDeliverable: receiveDeliverable,
+    });
+    descendantPid = Number.parseInt(await readFile(descendantPidPath, "utf8"), 10);
+    assert.equal(result.pass, false);
+    assert.equal(result.checks.commandDidNotTimeout, false);
+    assert.equal(await waitForProcessExit(descendantPid), true);
+  } finally {
+    if (Number.isInteger(descendantPid) && processExists(descendantPid)) {
+      process.kill(descendantPid, "SIGKILL");
+    }
+    await rm(root, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
 });
