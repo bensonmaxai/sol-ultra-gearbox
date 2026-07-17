@@ -42,6 +42,8 @@ else {
     ? "WRONG_MARKER"
     : mode === "marker_inline"
       ? "{\\\"kind\\\":\\\"fake-deliverable\\\"} " + marker + " trailing"
+      : mode === "long_deliverable"
+        ? "x".repeat(5_000) + "\\n" + marker
       : "{\\\"kind\\\":\\\"fake-deliverable\\\",\\\"value\\\":\\\"verified\\\"}\\n" + marker;
   const events = [
     { type: "session_meta", payload: { id: "fake-root", thread_source: mode === "source_mismatch" ? "subagent" : mode === "source_missing" ? null : "user", cwd } },

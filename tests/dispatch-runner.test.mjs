@@ -165,6 +165,36 @@ test("isolated runner accepts exact root evidence and removes temporary homes", 
   }
 });
 
+test("isolated runner accepts a marker-framed deliverable longer than the generic summary cap", async () => {
+  const root = await mkdtemp(join(tmpdir(), "dispatch-runner-long-deliverable-"));
+  const cwd = await mkdtemp(join(tmpdir(), "dispatch-runner-long-deliverable-work-"));
+  try {
+    const fake = await createFakeCodex(join(root, "fake-codex.mjs"));
+    await writeFile(join(root, "auth.json"), "fake-auth\n", "utf8");
+    let delivered = null;
+    const result = await runIsolatedRole({
+      codexBin: fake,
+      codexHome: root,
+      roleSpec: terra,
+      roleSource: terraSource,
+      cwd,
+      task,
+      taskHash: sha256(task),
+      timeoutMs: 2_000,
+      env: { FAKE_CODEX_MODE: "long_deliverable" },
+      onDeliverable: async (value) => {
+        delivered = value;
+        return value === "x".repeat(5_000);
+      },
+    });
+    assert.equal(result.pass, true);
+    assert.equal(delivered?.length, 5_000);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("isolated runner passes task data as argv rather than a shell command", async () => {
   const root = await mkdtemp(join(tmpdir(), "dispatch-runner-injection-"));
   const cwd = await mkdtemp(join(tmpdir(), "dispatch-runner-injection-work-"));
