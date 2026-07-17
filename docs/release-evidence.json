@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-17T19:47:43.168Z",
+  "generatedAt": "2026-07-17T20:54:26.807Z",
   "source": {
     "algorithm": "sha256",
     "fileCount": 95,
-    "sha256": "70d664252e2b3b1b3e2610067ddb0fc2639f7e16bbbf9eaeddc9c8c1c124af39",
-    "commit": "ef411c2521763618a1b15ab0493864b64aa5f402"
+    "sha256": "2d2b7bb916895aad491143b9f868cac8aa0721756b9d3597c00d47bcb446e944",
+    "commit": "115f853e0d08ab0a5efa8de501beadb524a568b5"
   },
   "tests": {
     "status": "pass",
     "command": "node --test --test-reporter=tap",
-    "total": 285,
-    "passed": 285,
+    "total": 286,
+    "passed": 286,
     "failed": 0
   },
   "runtime": {
@@ -37,7 +37,7 @@
       "passedRoleCount": 6,
       "rootVerified": true,
       "commit": "ef411c2521763618a1b15ab0493864b64aa5f402",
-      "validatedAtCommit": "ef411c2521763618a1b15ab0493864b64aa5f402",
+      "validatedAtCommit": "115f853e0d08ab0a5efa8de501beadb524a568b5",
       "runtimeBindingSha256": "5a96f8aecfa69258c4bfc02eee7deebeaeb5f694c91091073ea1c17e68212ec1",
       "writingSkillsAdapter": {
         "pass": true,
@@ -118,7 +118,7 @@
       "permissionStrategy": "sequential_isolated_roots",
       "verification": "adapter_contract",
       "commit": "ef411c2521763618a1b15ab0493864b64aa5f402",
-      "validatedAtCommit": "ef411c2521763618a1b15ab0493864b64aa5f402",
+      "validatedAtCommit": "115f853e0d08ab0a5efa8de501beadb524a568b5",
       "runtimeBindingSha256": "5a96f8aecfa69258c4bfc02eee7deebeaeb5f694c91091073ea1c17e68212ec1"
     },
     "acceptanceExam": {
@@ -233,5 +233,5 @@
     "coreRuntimeHook": "out_of_scope",
     "costEstimator": "gated_until_10_complete_pairs"
   },
-  "renderedMarkdownSha256": "4a141e78aa45a167b23b933ee27d7666cf48cabcefeb1d802666f8df98c9ab0d"
+  "renderedMarkdownSha256": "0548a882df9c261ab68e0af0d73e2fb1e4efcb97db11235af96f5260de0ea38d"
 }

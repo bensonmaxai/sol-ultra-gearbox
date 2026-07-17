@@ -5,9 +5,9 @@ This file is generated from `docs/release-evidence.json`. Manual edits fail
 
 ## Deterministic checks
 
-- Generated: 2026-07-17T19:47:43.168Z
-- Source manifest: `70d664252e2b3b1b3e2610067ddb0fc2639f7e16bbbf9eaeddc9c8c1c124af39` (95 files)
-- Tests: PASS (285/285)
+- Generated: 2026-07-17T20:54:26.807Z
+- Source manifest: `2d2b7bb916895aad491143b9f868cac8aa0721756b9d3597c00d47bcb446e944` (95 files)
+- Tests: PASS (286/286)
 - Verified workflow contract: PASS (5/5); Q10 canary: verified
 
 ## Runtime evidence
